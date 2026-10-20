@@ -411,4 +411,156 @@ function banners() {
   if (S.update) h += '<div class="banner"><span>A new version is ready.</span><button data-act="update">Update now</button></div>';
   if (S.failed.length) h += '<div class="banner warn"><span>' + S.failed.length + ' item(s) could not be saved.</span><button data-act="tab" data-t="' + (S.session.role === 'admin' ? 'sell' : 'today') + '">See</button></div>';
   const ios = /iphone|ipad/i.test(navigator.userAgent) && !navigator.standalone && !localStorage.getItem('kl_ios');
-  if (ios) h += '<div class="banner"><span>Install: tap Share, then “Add to Home Screen”.</span><button data-act="hideios">OK</button></div>';
+  if (ios) h += '<div class="banner"><span>Install: tap Share, then “Add to Home Screen”.</span><button data-act="hideios">OK</button></div>';  else if (S.installEvt) h += '<div class="banner"><span>Put KL Bread on your home screen.</span><button data-act="install">Install</button></div>';
+  return h;
+}
+
+/* ---------------- login ---------------- */
+function loginHTML() {
+  const needUrl = !S.apiUrl;
+  return '<div class="login"><div class="logo"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMjAgMTAwIj48cGF0aCBkPSJNOCA2NCBDOCAzMiAzMiAxMiA2MCAxMiBDODggMTIgMTEyIDMyIDExMiA2NCBDMTEyIDc2IDEwNSA4NCA5NCA4NCBMMjYgODQgQzE1IDg0IDggNzYgOCA2NCBaIiBmaWxsPSIjN0ExRjNEIi8+PHBhdGggZD0iTTM2IDM2IEw0NSA1OCBNNTUgMzAgTDY0IDUyIE03NCAzNiBMODMgNTgiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI0VERTdGNiIgc3Ryb2tlLXdpZHRoPSI2IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48cmVjdCB4PSIxNiIgeT0iODgiIHdpZHRoPSI4OCIgaGVpZ2h0PSI3IiByeD0iMy41IiBmaWxsPSIjNUUzNUIxIi8+PC9zdmc+" alt="KL Bread"><b>KL <em>BREAD</em></b></div>' +
+    '<h2 style="margin-top:0">Sign in</h2><p class="muted small" style="margin-top:0">Type the access key the owner gave you.</p>' +
+    (needUrl ? '<label>Server link (from the owner)</label><input id="lurl" placeholder="https://script.google.com/macros/s/.../exec" autocapitalize="off" autocomplete="off">' : '') +
+    '<label>Access key</label><input id="lkey" type="password" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="e.g. 4a637abd49">' +
+    '<p id="lerr" class="red small"></p><button class="btn primary block" data-act="login" id="lbtn">Sign in</button>' +
+    '<p class="small muted" style="margin-top:22px">' + (needUrl ? '' : '<a href="#" data-act="seturl" class="muted">Change server link</a> · ') + 'After signing in once, the app keeps working with no internet.</p></div>';
+}
+async function doLogin() {
+  const key = $('#lkey').value.trim(), urlEl = $('#lurl'), err = $('#lerr'), btn = $('#lbtn');
+  if (urlEl) { const u = urlEl.value.trim(); if (!/^https:\/\/script\.google(usercontent)?\.com\//.test(u)) { err.textContent = 'That does not look like the server link.'; return; } S.apiUrl = u.split('?')[0]; localStorage.setItem('kl_api', S.apiUrl); }
+  if (key.length < 4) { err.textContent = 'Please type your key.'; return; }
+  btn.disabled = true; btn.textContent = 'Checking…'; err.textContent = '';
+  try {
+    const old = S.session; S.session = { key };
+    const r = await api('login');
+    if (!r.ok) { S.session = old; err.textContent = errText(r.error); return; }
+    S.session = { key, name: r.user.name, role: r.user.role };
+    await kvSet('session', S.session);
+    S.keyBad = false; S.tab = S.session.role === 'admin' ? 'dash' : 'sell';
+    const b = await api('bootstrap');
+    if (b.ok) { S.cache = b; await kvSet('cache', b); }
+    render(); syncNow();
+  } catch (e) {
+    S.session = null; err.textContent = 'Could not reach the server. Check your internet and the server link.';
+  } finally { const b2 = $('#lbtn'); if (b2) { b2.disabled = false; b2.textContent = 'Sign in'; } }
+}
+async function logout() {
+  if (S.queue.length && !confirm(S.queue.length + ' sale(s) are not sent yet. Signing out will keep them on this phone, but only this phone can send them. Sign out?')) return;
+  S.session = null; await kvDel('session'); S.rep = null; await kvDel('report'); S.keyBad = false; render();
+}
+
+/* ---------------- SELL ---------------- */
+const cartTotal = () => r2(sum(S.cart.lines, l => l.q * l.u));
+function paid() {
+  const c = S.cart, t = cartTotal();
+  if (c.mode === 'cash') return { cash: t, momo: 0 };
+  if (c.mode === 'momo') return { cash: 0, momo: t };
+  if (c.mode === 'credit') return { cash: 0, momo: 0 };
+  return { cash: r2(+c.cash || 0), momo: r2(+c.momo || 0) };
+}
+function sellHTML() {
+  const c = S.cart, d = derived(), prods = (S.cache && S.cache.products) || [];
+  const qty = n => { const l = c.lines.find(x => x.p === n); return l ? l.q : 0; };
+  const cust = c.customer;
+  const cu = cust && d.customers.find(x => kk(x.name) === kk(cust));
+  let h = '<div class="card"><button class="pick" data-act="pickcust"><span class="muted">Customer</span><b>' + esc(cust || 'Choose customer') + '</b></button>' +
+    (cu && cu.balance > 0 ? '<p class="small red" style="margin:8px 0 0">Owes ' + money(cu.balance) + ' already</p>' : '') + '</div>';
+  if (!prods.length) h += '<div class="empty">No breads yet.<br>' + (S.session.role === 'admin' ? 'Add them in Setup.' : 'Connect to the internet once to load them.') + '</div>';
+  h += '<div class="grid">' + prods.map(p => '<button class="tile" data-act="add" data-p="' + esc(p.name) + '">' + (qty(p.name) ? '<i>' + qty(p.name) + '</i>' : '') + '<b>' + esc(p.name) + '</b><span>' + money(p.price) + '</span></button>').join('') + '</div>';
+  if (c.lines.length) {
+    h += '<div class="card"><div class="row between"><h3 style="margin:0">Basket</h3><button class="btn sm danger" data-act="clearcart">Clear</button></div>' +
+      c.lines.map((l, i) => '<div class="line"><div class="nm">' + esc(l.p) + '</div><div class="amt" id="lt' + i + '">' + money(l.q * l.u) + '</div>' +
+        '<div class="step"><button data-act="dec" data-i="' + i + '" aria-label="Less">−</button><input type="number" inputmode="decimal" min="0" step="1" value="' + l.q + '" data-in="qty" data-i="' + i + '" aria-label="Quantity"><button data-act="inc" data-i="' + i + '" aria-label="More">+</button></div>' +
+        '<div class="step" style="justify-content:flex-end"><span class="small muted">price</span><input class="pr" type="number" inputmode="decimal" min="0" step="0.5" value="' + l.u + '" data-in="price" data-i="' + i + '" aria-label="Price"></div></div>').join('') + '</div>';
+    h += '<div class="card"><h3>How did they pay?</h3><div class="seg">' +
+      [['cash', 'Cash'], ['momo', 'MoMo'], ['split', 'Part'], ['credit', 'Credit']].map(m => '<button class="' + (c.mode === m[0] ? 'on' : '') + '" data-act="mode" data-m="' + m[0] + '">' + m[1] + '</button>').join('') + '</div>' +
+      (c.mode === 'split' ? '<div class="picker"><div><label>Cash paid</label><input type="number" inputmode="decimal" min="0" value="' + esc(c.cash) + '" data-in="cash" placeholder="0"></div><div><label>MoMo paid</label><input type="number" inputmode="decimal" min="0" value="' + esc(c.momo) + '" data-in="momo" placeholder="0"></div></div>' : '') +
+      '<p class="small" id="paysum" style="margin:10px 0 0"></p></div>';
+  }
+  return h;
+}
+function paySummaryText() {
+  const t = cartTotal(), p = paid(), bal = r2(t - p.cash - p.momo);
+  if (bal > 0.004) return '<span class="red"><b>Balance owed: ' + money(bal) + '</b></span>' + (S.cart.mode === 'split' ? ' <span class="muted">(Cash ' + money(p.cash) + ' + MoMo ' + money(p.momo) + ')</span>' : '');
+  if (bal < -0.004) return '<span class="red"><b>Paid is more than the total by ' + money(-bal) + '</b></span>';
+  return '<span class="green"><b>Fully paid</b></span>';
+}
+function sellBar() {
+  const n = sum(S.cart.lines, l => l.q);
+  return '<div class="bar"><div class="tot"><span>' + (n ? n + ' bread(s)' : 'Basket empty') + '</span><b id="bartot">' + money(cartTotal()) + '</b></div><button class="btn primary" data-act="savesale" ' + (S.cart.lines.length ? '' : 'disabled') + '>Save sale</button></div>';
+}
+function updateTotals() {
+  const bt = $('#bartot'); if (bt) bt.textContent = money(cartTotal());
+  const ps = $('#paysum'); if (ps) ps.innerHTML = paySummaryText();
+  S.cart.lines.forEach((l, i) => { const e = $('#lt' + i); if (e) e.textContent = money(l.q * l.u); });
+}
+function pickCustomerSheet(prefill) {
+  const el = sheet('<h2>Choose customer</h2><input id="cs" placeholder="Search name…" autocomplete="off" value="' + esc(prefill || '') + '"><div id="cl"></div>');
+  const draw = () => {
+    const q = kk($('#cs').value), d = derived(), me = kk(S.session.name);
+    let list = d.customers.filter(c => !q || kk(c.name).includes(q) || kk(c.location).includes(q));
+    list.sort((a, b) => (kk(b.person) === me) - (kk(a.person) === me) || a.name.localeCompare(b.name));
+    $('#cl').innerHTML =
+      '<button class="item" data-act="usecust" data-n="' + WALKIN + '"><span class="avatar">W</span><span class="grow"><span class="nm">' + WALKIN + '</span><br><span class="small muted">Pays now, no name needed</span></span></button>' +
+      '<button class="item" data-act="newcust" data-q="' + esc($('#cs').value) + '"><span class="avatar">+</span><span class="grow"><span class="nm">New customer' + ($('#cs').value ? ': ' + esc($('#cs').value) : '') + '</span></span></button>' +
+      list.slice(0, 80).map(c => '<button class="item" data-act="usecust" data-n="' + esc(c.name) + '"><span class="avatar">' + esc(initials(c.name)) + '</span><span class="grow"><span class="nm">' + esc(c.name) + '</span><br><span class="small muted">' + esc(c.location || c.person) + '</span></span>' +
+        (c.balance > 0.004 ? '<span class="amt red">' + money(c.balance) + '</span>' : '') + '</button>').join('');
+  };
+  el.addEventListener('input', e => { if (e.target.id === 'cs') draw(); });
+  draw(); setTimeout(() => { const i = $('#cs'); if (i && !prefill) i.focus(); }, 80);
+}
+function newCustomerSheet(name, then) {
+  sheet('<h2>New customer</h2><label>Name</label><input id="nn" value="' + esc(name || '') + '" autocomplete="off"><label>Phone (optional)</label><input id="np" inputmode="tel" autocomplete="off"><label>Location (optional)</label><input id="nl" autocomplete="off"><br><button class="btn primary block" data-act="savecust">Save customer</button>');
+  S.afterCust = then;
+}
+async function addCustomer() {
+  const name = $('#nn').value.trim().replace(/\s+/g, ' ');
+  if (!name) { toast('Please enter a name'); return; }
+  if (kk(name) === kk(WALKIN)) { toast('Use a real name'); return; }
+  const d = derived();
+  if (!d.customers.some(c => kk(c.name) === kk(name))) {
+    const op = { type: 'customer', id: uid('C'), ts: Date.now(), name, phone: $('#np').value.trim(), location: $('#nl').value.trim() };
+    S.queue.push(op); await putOne('queue', op); syncSoon();
+  }
+  const cb = S.afterCust; S.afterCust = null; closeSheet();
+  if (cb) cb(name); else render(true);
+}
+async function saveSale() {
+  const c = S.cart, t = cartTotal(), p = paid();
+  if (!c.lines.length) return;
+  if (!c.customer) { toast('Choose a customer first'); pickCustomerSheet(); return; }
+  if (c.lines.some(l => !(l.q > 0) || l.u < 0)) { toast('Check quantity and price'); return; }
+  const bal = r2(t - p.cash - p.momo);
+  if (bal < -0.004) { toast('Paid is more than the total'); return; }
+  if (bal > 0.004 && kk(c.customer) === kk(WALKIN)) { toast('Credit needs a named customer'); pickCustomerSheet(); return; }
+  const op = { type: 'sale', id: uid('B'), ts: Date.now(), date: today(), time: nowTime(), customer: c.customer, items: c.lines.map(l => ({ p: l.p, q: l.q, u: l.u })), cash: p.cash, momo: p.momo, person: S.session.name };
+  S.queue.push(op); await putOne('queue', op);
+  clearCart(); render(); syncSoon();
+  receiptSheet({ id: op.id, time: op.time, date: op.date, customer: op.customer, items: op.items, total: t, cash: p.cash, momo: p.momo }, true);
+}
+function receiptText(b) {
+  const biz = (S.cache && S.cache.business) || 'KL Bread';
+  const lines = b.items.map(i => '- ' + i.q + ' x ' + i.p + ' @ ' + r2(i.u).toFixed(2) + ' = ' + r2(i.q * i.u).toFixed(2));
+  const bal = r2(b.total - b.cash - b.momo);
+  return [biz + ' receipt', (b.date || today()) + ' ' + String(b.time || '').slice(0, 5), 'Customer: ' + b.customer, ''].concat(lines, ['',
+    'Total: ' + money(b.total), 'Paid: ' + money(b.cash + b.momo) + (b.momo ? ' (MoMo ' + money(b.momo) + ')' : ''),
+    bal > 0.004 ? 'Balance owed: ' + money(bal) : 'Fully paid', '', 'Thank you!']).join('\n');
+}
+function waLink(phone, text) {
+  let n = String(phone || '').replace(/[^\d]/g, '');
+  if (n.startsWith('0')) n = '233' + n.slice(1);
+  return 'https://wa.me/' + n + '?text=' + encodeURIComponent(text);
+}
+let _receipt;
+function receiptSheet(b, fresh) {
+  _receipt = b;
+  const bal = r2(b.total - b.cash - b.momo), cu = derived().customers.find(c => kk(c.name) === kk(b.customer));
+  sheet('<h2>' + (fresh ? '✓ Sale saved' : 'Receipt') + '</h2><div class="receipt"><div class="muted small">' + esc(b.customer) + ' · ' + esc(String(b.time || '').slice(0, 5)) + '</div><hr>' +
+    b.items.map(i => '<div class="l"><span>' + i.q + ' × ' + esc(i.p) + '</span><span>' + money(i.q * i.u) + '</span></div>').join('') + '<hr>' +
+    '<div class="l tot"><span>Total</span><span>' + money(b.total) + '</span></div>' +
+    (b.cash ? '<div class="l"><span>Cash</span><span>' + money(b.cash) + '</span></div>' : '') + (b.momo ? '<div class="l"><span>MoMo</span><span>' + money(b.momo) + '</span></div>' : '') +
+    (bal > 0.004 ? '<div class="l red"><b>Balance owed</b><b>' + money(bal) + '</b></div>' : '<div class="l green"><b>Fully paid</b></div>') +
+    (cu && cu.balance > 0.004 && bal > 0.004 ? '<div class="small muted">Total owed by this customer: ' + money(cu.balance) + '</div>' : '') + '</div><br>' +
+    '<div class="row"><a class="btn violet grow" style="text-align:center;text-decoration:none" target="_blank" rel="noopener" href="' + esc(waLink(cu && cu.phone, receiptText(b))) + '">Send on WhatsApp</a><button class="btn grow" data-act="close">' + (fresh ? 'New sale' : 'Close') + '</button></div>');
+}
+  
