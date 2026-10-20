@@ -367,12 +367,12 @@ const ICON = {
   custs: '<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.5 2.7-6 6-6s6 2.5 6 6"/><path d="M16 5.5a3 3 0 0 1 0 5.5M18 14.5c1.7.9 3 2.8 3 5.5"/></svg>',
   dash: '<svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
   cash: '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/></svg>',
-  setup: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg>'
+   history: '<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>', setup: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg>'
 };
 function tabsFor() {
   return S.session.role === 'admin'
     ? [['dash', 'Dashboard'], ['sell', 'Sell'], ['custs', 'Customers'], ['cash', 'Cash'], ['setup', 'Setup']]
-    : [['sell', 'Sell'], ['today', 'Today'], ['custs', 'Customers']];
+    : [['sell', 'Sell'], ['today', 'Today'], ['history', 'History'], ['custs', 'Customers']];
 }
 let scrollKeep = 0;
 function render(keepScroll) {
@@ -383,7 +383,8 @@ function render(keepScroll) {
   let body = '';
   if (t === 'sell') body = sellHTML();
   else if (t === 'today') body = todayHTML();
-  else if (t === 'custs') body = custsHTML();
+    else if (t === 'history') body = historyHTML();
+    else if (t === 'custs') body = custsHTML();
   else if (t === 'dash') body = dashHTML();
   else if (t === 'cash') body = cashHTML();
   else if (t === 'setup') body = setupHTML();
@@ -582,7 +583,29 @@ function todayHTML() {
   return h;
 }
 
-/* ---------------- CUSTOMERS ---------------- */
+/* ---------------- HISTORY (last 30 days, own sales) ---------------- */
+async function loadHistory() {
+  if (!S.hist) { try { S.hist = await kvGet('history'); } catch (e) { /* ignore */ } if (S.tab === 'history') render(true); }
+  if (!navigator.onLine) return;
+  try { const r = await api('history', { days: 30 }); if (r.ok) { S.hist = r; await kvSet('history', r); } } catch (e) { /* ignore */ }
+  if (S.tab === 'history') render(true);
+}
+function historyHTML() {
+  const h = S.hist;
+  let out = '<h2 style="margin-top:6px">My last 30 days</h2>';
+  if (!h) return out + '<div class="empty">' + (navigator.onLine ? 'Loading…' : 'Open this tab once with internet to load your history.') + '</div>';
+  if (!h.days.length) return out + '<div class="empty">No sales in the last 30 days.</div>';
+  out += '<p class="small muted" style="margin:0 2px 6px">Shown as of the last time you were online.</p>';
+  h.days.forEach(d => {
+    out += '<h2>' + esc(d.date) + ' · sales ' + money(d.sales) + ' · received ' + money(d.collected) + '</h2><div class="card" style="padding:4px 14px">' + d.rows.map(r => {
+      if (r.kind === 'pay') return '<div class="item"><span class="grow"><span class="nm">' + esc(r.customer) + '</span><br><span class="small muted">' + esc(r.time) + ' · debt payment</span></span><span class="right"><span class="amt">' + money(r.total) + '</span></span></div>';
+      const bal = r2(r.total - r.paid);
+      return '<div class="item"><span class="grow"><span class="nm">' + esc(r.customer) + '</span><br><span class="small muted">' + esc(r.time) + ' · ' + esc(r.items.map(i => i.q + ' ' + i.p).join(', ')) + '</span></span><span class="right"><span class="amt">' + money(r.total) + '</span>' + (bal > 0.004 ? '<br><span class="small red">owes ' + money(bal) + '</span>' : '') + '</span></div>';
+    }).join('') + '</div>';
+  });
+  return out;
+}
+  /* ---------------- CUSTOMERS ---------------- */
 function custsHTML() {
   return '<div style="margin-top:6px"><input id="cq" placeholder="Search customers…" value="' + esc(S.cq) + '" data-in="cq" autocomplete="off"></div>' +
     '<div class="chips" style="margin-top:8px">' + [['mine', S.session.role === 'admin' ? 'All' : 'Mine'], ['owing', 'Owing'], ['all', 'Everyone']].filter(x => !(S.session.role === 'admin' && x[0] === 'all')).map(x => '<button class="chip ' + (S.cf === x[0] ? 'on' : '') + '" data-act="cf" data-f="' + x[0] + '">' + x[1] + '</button>').join('') +
@@ -741,7 +764,7 @@ const ACT = {
   sync: () => syncNow(true),
   menu: () => sheet('<h2>Menu</h2><div class="stats"><div class="stat wide"><span>Signed in as</span><b style="font-size:17px">' + esc(S.session.name) + '</b></div></div><br><button class="btn block" data-act="sync2">Send & refresh now</button><br><button class="btn danger block" data-act="logout2">Sign out</button><p class="small muted">Version 1 · ' + S.queue.length + ' not sent</p>'),
   sync2: () => { closeSheet(); syncNow(true); }, logout2: () => { closeSheet(); logout(); },
-  tab: d => { S.tab = d.t; closeSheet(); render(); window.scrollTo(0, 0); if (d.t === 'dash' || d.t === 'cash') { if (navigator.onLine) fetchReport(); } if (d.t === 'setup' && navigator.onLine) loadLists(); },
+    tab: d => { S.tab = d.t; closeSheet(); render(); window.scrollTo(0, 0); if (d.t === 'dash' || d.t === 'cash') { if (navigator.onLine) fetchReport(); } if (d.t === 'setup' && navigator.onLine) loadLists(); if (d.t === 'history') loadHistory(); }, 'setup' && navigator.onLine) loadLists(); },
   update: () => { if (swReg && swReg.waiting) swReg.waiting.postMessage('SKIP'); },
   hideios: () => { localStorage.setItem('kl_ios', '1'); render(true); },
   install: async () => { if (S.installEvt) { S.installEvt.prompt(); await S.installEvt.userChoice; S.installEvt = null; render(true); } },
