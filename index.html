@@ -648,4 +648,157 @@ function dashHTML() {
   let h = picker + (stale ? '<p class="small muted">Showing ' + ml + ' · tap Refresh to load your choice</p>' : '');
   h += '<div class="stats" style="margin-top:10px"><div class="stat wine"><span>Today sales</span><b>' + money(r.todayTotals.sales) + '</b></div><div class="stat"><span>Today collected</span><b>' + money(coll(r.todayTotals)) + '</b></div></div>';
   h += '<h2>' + ml +
+      h += '<h2>Cash each sales person holds</h2><div class="card" style="padding:4px 14px">' + (r.people.length ? r.people.map(p => '<div class="item"><span class="avatar">' + esc(initials(p.name)) + '</span><span class="grow"><span class="nm">' + esc(p.name) + '</span><br><span class="small muted">holds</span> <b class="' + (p.cashHeld > 0.004 ? 'amber' : '') + '">' + money(p.cashHeld) + '</b></span><button class="btn sm violet" data-act="handover" data-n="' + esc(p.name) + '" data-a="' + Math.max(0, p.cashHeld) + '">Receive cash</button></div>').join('') : '<div class="empty">No sales persons.</div>') + '</div>';
+  h += '<h2>Recent cash records</h2><div class="card" style="padding:4px 14px">' + (r.recentCash.length ? r.recentCash.map(c => '<div class="item"><span class="grow"><span class="nm">' + (c.type === 'Bank' ? 'Sent to bank' : 'Received from ' + esc(c.person)) + '</span><br><span class="small muted">' + esc(c.date) + (c.note ? ' · ' + esc(c.note) : '') + '</span></span><span class="amt">' + money(c.amount) + '</span></div>').join('') : '<div class="empty">Nothing recorded yet.</div>') + '</div>';
+  return h;
+}
+function cashSheet(kind, person, amount) {
+  sheet('<h2>' + (kind === 'bank' ? 'Money sent to bank' : 'Receive cash from ' + esc(person)) + '</h2>' +
+    '<label>Amount (GH₵)</label><input id="ca" type="number" inputmode="decimal" min="0" value="' + (amount > 0 ? r2(amount) : '') + '"><label>Date</label><input id="cd" type="date" value="' + today() + '"><label>Note (optional)</label><input id="cn" autocomplete="off"><br>' +
+    '<button class="btn primary block" data-act="savecash" data-k="' + kind + '" data-n="' + esc(person || '') + '">Save</button>');
+}
+async function saveCash(kind, person) {
+  const amount = r2(+$('#ca').value || 0);
+  if (!(amount > 0)) { toast('Enter the amount'); return; }
+  await adminCall({ op: kind, id: uid('K'), person, amount, date: $('#cd').value || today(), note: $('#cn').value.trim() }, 'Saved');
+  await fetchReport();
+}
+
+/* ---------------- OWNER: SETUP ---------------- */
+async function loadLists() {
+  try { const r = await api('admin', { op: 'lists' }); if (r.ok) { S.lists = r; } } catch (e) { toast('Needs internet'); }
+  if (S.tab === 'setup') render(true);
+}
+function setupHTML() {
+  const L = S.lists;
+  if (!L) return '<div class="empty">' + (navigator.onLine ? 'Loading…' : 'Setup needs internet.') + '</div>';
+  const base = location.href.split('#')[0].split('?')[0];
+  return '<div class="row between"><h2>Breads & prices</h2><button class="btn sm primary" data-act="editprod" data-n="">+ Add</button></div><div class="card" style="padding:4px 14px">' +
+    L.products.map(p => '<button class="item" data-act="editprod" data-n="' + esc(p.name) + '"><span class="grow"><span class="nm">' + esc(p.name) + '</span></span><span class="amt">' + money(p.price) + '</span>' + (p.active ? '' : '<span class="badge amber">hidden</span>') + '</button>').join('') + '</div>' +
+    '<div class="row between"><h2>Customers (' + L.customers.length + ')</h2><button class="btn sm primary" data-act="editcust" data-n="">+ Add</button></div><div class="card" style="padding:4px 14px">' +
+    (L.customers.length ? L.customers.map(c => '<button class="item" data-act="editcust" data-n="' + esc(c.name) + '"><span class="grow"><span class="nm">' + esc(c.name) + '</span><br><span class="small muted">' + esc(c.person || 'no sales person') + (c.location ? ' · ' + esc(c.location) : '') + '</span></span>' + (c.active ? '' : '<span class="badge amber">hidden</span>') + '</button>').join('') : '<div class="empty">No customers yet. Sales persons add their own when selling.</div>') + '</div>' +
+    '<div class="row between"><h2>Sales persons & keys</h2><button class="btn sm primary" data-act="editperson" data-n="">+ Add</button></div><div class="card" style="padding:4px 14px">' +
+    L.people.map(p => '<button class="item" data-act="editperson" data-n="' + esc(p.name) + '"><span class="avatar">' + esc(initials(p.name)) + '</span><span class="grow"><span class="nm">' + esc(p.name) + '</span><br><span class="small muted">' + p.role + ' · key ' + esc(p.key) + '</span></span>' + (p.active ? '' : '<span class="badge amber">off</span>') + '</button>').join('') + '</div>' +
+    '<p class="small muted">App link for your team:<br><b style="word-break:break-all">' + esc(base) + '</b></p>';
+}
+function editProdSheet(name) {
+  const p = name ? S.lists.products.find(x => x.name === name) : null;
+  sheet('<h2>' + (p ? 'Edit bread' : 'New bread') + '</h2><label>Name</label><input id="en" value="' + esc(p ? p.name : '') + '" ' + (p ? 'readonly' : '') + ' autocomplete="off"><label>Price (GH₵)</label><input id="ep" type="number" inputmode="decimal" value="' + (p ? p.price : '') + '">' +
+    (p ? '<label>Show in the sell screen?</label><select id="ea"><option value="1"' + (p.active ? ' selected' : '') + '>Yes</option><option value="0"' + (p.active ? '' : ' selected') + '>No, hide it</option></select>' : '') +
+    '<br><button class="btn primary block" data-act="saveprod">Save</button>');
+}
+function editCustSheet(name) {
+  const c = name ? S.lists.customers.find(x => x.name === name) : null;
+  const opts = S.lists.people.filter(p => p.active).map(p => '<option' + (c && c.person === p.name ? ' selected' : '') + '>' + esc(p.name) + '</option>').join('');
+  sheet('<h2>' + (c ? 'Edit customer' : 'New customer') + '</h2><label>Name</label><input id="en" value="' + esc(c ? c.name : '') + '" ' + (c ? 'readonly' : '') + ' autocomplete="off"><label>Phone</label><input id="ep" inputmode="tel" value="' + esc(c ? c.phone : '') + '"><label>Location</label><input id="el" value="' + esc(c ? c.location : '') + '"><label>Sales person</label><select id="es">' + opts + '</select>' +
+    (c ? '<label>Active?</label><select id="ea"><option value="1"' + (c.active ? ' selected' : '') + '>Yes</option><option value="0"' + (c.active ? '' : ' selected') + '>No, hide</option></select>' : '') +
+    '<br><button class="btn primary block" data-act="savecustadmin">Save</button>');
+}
+function editPersonSheet(name) {
+  const p = name ? S.lists.people.find(x => x.name === name) : null;
+  const msg = p ? 'Hello ' + p.name + ', open KL Bread here: ' + location.href.split('#')[0].split('?')[0] + '\nYour access key: ' + p.key : '';
+  sheet('<h2>' + (p ? esc(p.name) : 'New sales person') + '</h2>' + (p ? '' : '<label>Name</label><input id="en" autocomplete="off">') +
+    (p ? '<div class="card" style="background:var(--lav);box-shadow:none"><div class="small muted">Access key</div><b style="font-size:20px;letter-spacing:1px">' + esc(p.key) + '</b></div>' : '') +
+    '<label>Role</label><select id="er"><option' + (p && p.role === 'Sales' || !p ? ' selected' : '') + '>Sales</option><option' + (p && p.role === 'Admin' ? ' selected' : '') + '>Admin</option></select>' +
+    (p ? '<label>Allowed to sign in?</label><select id="ea"><option value="1"' + (p.active ? ' selected' : '') + '>Yes</option><option value="0"' + (p.active ? '' : ' selected') + '>No, switch off</option></select>' : '') +
+    (p ? '<label><input type="checkbox" id="ek" style="width:auto;min-height:0"> Make a new key (old key stops working)</label>' : '') +
+    '<br><button class="btn primary block" data-act="saveperson" data-n="' + esc(name || '') + '">Save</button>' +
+    (p ? '<br><a class="btn block" style="text-align:center;text-decoration:none" target="_blank" rel="noopener" href="' + esc('https://wa.me/?text=' + encodeURIComponent(msg)) + '">Send link and key on WhatsApp</a>' : ''));
+}
+async function adminCall(body, okMsg) {
+  try {
+    const r = await api('admin', body);
+    if (!r.ok) { toast(errText(r.error)); return false; }
+    closeSheet(); if (okMsg) toast(okMsg); return r;
+  } catch (e) { toast('Needs internet'); return false; }
+}
+
+/* ---------------- events ---------------- */
+const ACT = {
+  close: () => { closeSheet(); render(true); },
+  login: doLogin, logout,
+  seturl: () => { localStorage.removeItem('kl_api'); S.apiUrl = ''; render(); },
+  sync: () => syncNow(true),
+  menu: () => sheet('<h2>Menu</h2><div class="stats"><div class="stat wide"><span>Signed in as</span><b style="font-size:17px">' + esc(S.session.name) + '</b></div></div><br><button class="btn block" data-act="sync2">Send & refresh now</button><br><button class="btn danger block" data-act="logout2">Sign out</button><p class="small muted">Version 1 · ' + S.queue.length + ' not sent</p>'),
+  sync2: () => { closeSheet(); syncNow(true); }, logout2: () => { closeSheet(); logout(); },
+  tab: d => { S.tab = d.t; closeSheet(); render(); window.scrollTo(0, 0); if (d.t === 'dash' || d.t === 'cash') { if (navigator.onLine) fetchReport(); } if (d.t === 'setup' && navigator.onLine) loadLists(); },
+  update: () => { if (swReg && swReg.waiting) swReg.waiting.postMessage('SKIP'); },
+  hideios: () => { localStorage.setItem('kl_ios', '1'); render(true); },
+  install: async () => { if (S.installEvt) { S.installEvt.prompt(); await S.installEvt.userChoice; S.installEvt = null; render(true); } },
+
+  pickcust: () => pickCustomerSheet(),
+  usecust: d => { S.cart.customer = d.n; saveCart(); closeSheet(); render(true); },
+  newcust: d => newCustomerSheet(d.q, name => { S.cart.customer = name; saveCart(); render(true); }),
+  newcust2: () => newCustomerSheet('', () => render(true)),
+  savecust: addCustomer,
+  add: d => {
+    const l = S.cart.lines.find(x => x.p === d.p);
+    if (l) l.q += 1; else { const pr = S.cache.products.find(x => x.name === d.p); S.cart.lines.push({ p: d.p, q: 1, u: pr ? pr.price : 0 }); }
+    saveCart(); render(true);
+  },
+  inc: d => { S.cart.lines[+d.i].q += 1; saveCart(); render(true); },
+  dec: d => { const l = S.cart.lines[+d.i]; l.q -= 1; if (l.q <= 0) S.cart.lines.splice(+d.i, 1); saveCart(); render(true); },
+  clearcart: () => { clearCart(); render(true); },
+  mode: d => { S.cart.mode = d.m; if (d.m !== 'split') { S.cart.cash = ''; S.cart.momo = ''; } saveCart(); render(true); },
+  savesale: saveSale,
+  bill: d => { const b = derived().mine.bills.find(x => x.id === d.id); if (b) receiptSheet(Object.assign({ date: today() }, b), false); },
+  discard: async d => { S.failed = S.failed.filter(f => f.id !== d.id); await delOne('failed', d.id); render(true); },
+
+  cf: d => { S.cf = d.f; render(true); },
+  cust: d => customerSheet(d.n),
+  sellto: d => { S.cart.customer = d.n; saveCart(); closeSheet(); S.tab = 'sell'; render(); window.scrollTo(0, 0); },
+  collect: d => collectSheet(d.n),
+  savepay: d => savePayment(d.n),
+
+  refreshrep: () => fetchReport(true),
+  bank: () => cashSheet('bank', '', S.rep ? S.rep.cashBox.atOwner : 0),
+  handover: d => cashSheet('handover', d.n, +d.a),
+  savecash: d => saveCash(d.k, d.n),
+  editprod: d => editProdSheet(d.n),
+  saveprod: async () => {
+    const name = $('#en').value.trim(), price = +$('#ep').value, a = $('#ea');
+    if (!name || !(price >= 0) || $('#ep').value === '') { toast('Enter name and price'); return; }
+    if (await adminCall({ op: 'saveProduct', name, price, active: a ? a.value === '1' : true }, 'Saved')) { await loadLists(); await refreshCache(); }
+  },
+  editcust: d => editCustSheet(d.n),
+  savecustadmin: async () => {
+    const name = $('#en').value.trim(), a = $('#ea');
+    if (!name) { toast('Enter a name'); return; }
+    if (await adminCall({ op: 'saveCustomer', name, phone: $('#ep').value, location: $('#el').value, person: $('#es').value, active: a ? a.value === '1' : true }, 'Saved')) { await loadLists(); await refreshCache(); }
+  },
+  editperson: d => editPersonSheet(d.n),
+  saveperson: async d => {
+    const name = d.n || ($('#en') && $('#en').value.trim()), a = $('#ea'), k = $('#ek');
+    if (!name) { toast('Enter a name'); return; }
+    if (await adminCall({ op: 'savePerson', name, role: $('#er').value, active: a ? a.value === '1' : true, newKey: k ? k.checked : false }, 'Saved')) { await loadLists(); }
+  }
+};
+async function refreshCache() { try { const b = await api('bootstrap'); if (b.ok) { S.cache = b; await kvSet('cache', b); } } catch (e) { /* ignore */ } render(true); }
+
+document.addEventListener('click', e => {
+  const a = e.target.closest('[data-act]');
+  if (!a || a.disabled) return;
+  if (a.tagName === 'A' && a.getAttribute('href') === '#') e.preventDefault();
+  const f = ACT[a.dataset.act]; if (f) f(a.dataset, a, e);
+});
+document.addEventListener('input', e => {
+  const t = e.target, w = t.dataset.in; if (!w) return;
+  const i = +t.dataset.i;
+  if (w === 'qty') { const v = parseFloat(t.value); S.cart.lines[i].q = v > 0 ? v : 0; saveCart(); updateTotals(); }
+  else if (w === 'price') { const v = parseFloat(t.value); S.cart.lines[i].u = v >= 0 ? v : 0; saveCart(); updateTotals(); }
+  else if (w === 'cash') { S.cart.cash = t.value; saveCart(); updateTotals(); }
+  else if (w === 'momo') { S.cart.momo = t.value; saveCart(); updateTotals(); }
+  else if (w === 'cq') { S.cq = t.value; renderCustList(); }
+});
+document.addEventListener('change', e => {
+  const t = e.target, w = t.dataset.ch; if (!w) return;
+  S.sel[w] = +t.value; S.repFresh = false; fetchReport(true);
+});
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && $('#lkey') && document.activeElement && document.activeElement.id === 'lkey') doLogin(); });
+
+boot();
+})();
+</script>
+</body>
+</html>
   
