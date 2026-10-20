@@ -1,19 +1,19 @@
 {
-  "name": "KL Bread",
-  "short_name": "KL Bread",
-  "description": "KL Bread sales, customers and cash - works offline",
-  "start_url": "./",
-  "scope": "./",
-  "display": "standalone",
-  "orientation": "portrait",
-  "background_color": "#7A1F3D",
-  "theme_color": "#7A1F3D",
-  "icons": [
-    {
-      "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMjAgMTAwIj48cGF0aCBkPSJNOCA2NCBDOCAzMiAzMiAxMiA2MCAxMiBDODggMTIgMTEyIDMyIDExMiA2NCBDMTEyIDc2IDEwNSA4NCA5NCA4NCBMMjYgODQgQzE1IDg0IDggNzYgOCA2NCBaIiBmaWxsPSIjN0ExRjNEIi8+PHBhdGggZD0iTTM2IDM2IEw0NSA1OCBNNTUgMzAgTDY0IDUyIE03NCAzNiBMODMgNTgiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI0VERTdGNiIgc3Ryb2tlLXdpZHRoPSI2IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48cmVjdCB4PSIxNiIgeT0iODgiIHdpZHRoPSI4OCIgaGVpZ2h0PSI3IiByeD0iMy41IiBmaWxsPSIjNUUzNUIxIi8+PC9zdmc+",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any"
-    }
-  ]
+ "name": "KL Bread",
+ "short_name": "KL Bread",
+ "description": "KL Bread sales, customers and cash - works offline",
+ "start_url": "./",
+ "scope": "./",
+ "display": "standalone",
+ "orientation": "portrait",
+ "background_color": "#7A1F3D",
+ "theme_color": "#7A1F3D",
+ "icons": [
+  {
+   "src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMAAAADABAMAAACg8nE0AAAAGFBMVEXt5/bi0+TOscSzndvCnbGlcJCJO1t6Hz3UJFS+AAADYUlEQVR42u2bz08TQRTH32whMZ52UUy4laqcG4WbhxL4A1DDP8A/4d9iIHrRiybgmZjAXyC96EEg3aOh0M7NQ7czHpjdnZlut/NmF3/g21Pn52fe+755M7tJ2Su42ScAAhCAAAQgAAEIQAACEIAABCAAAQhAAAIQgAAEIAABUM8cqvdwCABRdEOAwfkXDgAA7OGT5foBg8+99Kc8O1vYdEU0njl1k2fvuV7++fVi6U6NFoiPsV11er7drM2Cq3c/Coz6dnepJgvGe8VuO2TtWvaB2JvWchjXAZC7fGrTB14D4HvJJPJNdUD/U1nr6KAqQO6Xt5/yioD+jAnkQTWAeDvLBRdxJcCpWXwUTnbZrwIQpsIPXu4U6BxXAPTN4nrhxj/wB8iJEGUFCW7EvQH2UA7QdlmGM+DEKh8DFJ0zV74Acaz8st1RFWn2zWoAACCJPQGpxCutVTUTAAMAgMXWmt7xyBOgDIA2NK7jX3JgnetwCvQdcekHEJrlStsYIA2jzpSeCECiBU8z80UEANAFCItsxQFOtOELKiKVyj2A+45xNB0gs2UJgEZmVKBqjIEJ9wAI3VdBpjJ0AGAMwAwfxR6APDRknGmqVNZqZgXqdIC2qFzTIyVHNw8ny1x3QDf/2dNVbqgaI7GO8QCp6SYNlcMClSVHA4S5I1KVlfMTO3PHaIButKZpKkdsZe4uGjC0hjdNOezMPUQDDKfmmqabbpjJksmEBHQtQYLMc4Uqj9GA2BrOLJW5qbLAAkyTTZULz2deCWCqXHg+VwTkKifqNmarzJGvUGKiqJYidoWRuTPN2pUsSPL8PLheq7BUrugisPPzhMpYAC/bFqnKocNOc/3a0ptgDMrOMfy3ihG3r+kJHx/XCJCvZ9dU0mD2Cm7tJ7VpgBA7EfvvXBRhJ4qQAIYFhEhAAwto/20WFL1xl2qJBdjZ3zunBVBPGEVowDwOsIUGsC3M/PMhfie3MICWR6qYR8g8t+WTi1bdARteya6x4zr/Stsvmy6+cJv/8fOyc6L0/wfiRMy6mgTNe03/W0XwFNb+1QOntqfURQO32xFb9gRcdh1XGa/7ucj5didvtch/FOCcsFueURRsOIZp6LsPWEQiE4AABCAAAQhAAAIQgAAEIAABCEAAAhCAAL8Z8AuooPculaSFeQAAAABJRU5ErkJggg==",
+   "sizes": "192x192 512x512",
+   "type": "image/png",
+   "purpose": "any"
+  }
+ ]
 }
