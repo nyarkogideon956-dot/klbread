@@ -1,0 +1,19 @@
+{
+  "name": "KL Bread",
+  "short_name": "KL Bread",
+  "description": "KL Bread sales, customers and cash - works offline",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#7A1F3D",
+  "theme_color": "#7A1F3D",
+  "icons": [
+    {
+      "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMjAgMTAwIj48cGF0aCBkPSJNOCA2NCBDOCAzMiAzMiAxMiA2MCAxMiBDODggMTIgMTEyIDMyIDExMiA2NCBDMTEyIDc2IDEwNSA4NCA5NCA4NCBMMjYgODQgQzE1IDg0IDggNzYgOCA2NCBaIiBmaWxsPSIjN0ExRjNEIi8+PHBhdGggZD0iTTM2IDM2IEw0NSA1OCBNNTUgMzAgTDY0IDUyIE03NCAzNiBMODMgNTgiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI0VERTdGNiIgc3Ryb2tlLXdpZHRoPSI2IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48cmVjdCB4PSIxNiIgeT0iODgiIHdpZHRoPSI4OCIgaGVpZ2h0PSI3IiByeD0iMy41IiBmaWxsPSIjNUUzNUIxIi8+PC9zdmc+",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
