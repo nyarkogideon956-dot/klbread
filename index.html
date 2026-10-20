@@ -563,4 +563,89 @@ function receiptSheet(b, fresh) {
     (cu && cu.balance > 0.004 && bal > 0.004 ? '<div class="small muted">Total owed by this customer: ' + money(cu.balance) + '</div>' : '') + '</div><br>' +
     '<div class="row"><a class="btn violet grow" style="text-align:center;text-decoration:none" target="_blank" rel="noopener" href="' + esc(waLink(cu && cu.phone, receiptText(b))) + '">Send on WhatsApp</a><button class="btn grow" data-act="close">' + (fresh ? 'New sale' : 'Close') + '</button></div>');
 }
+  /* ---------------- TODAY ---------------- */
+function todayHTML() {
+  const m = derived().mine, t = m.today;
+  let h = '<h2 style="margin-top:6px">Today</h2><div class="stats">' +
+    '<div class="stat wine"><span>Sales</span><b>' + money(t.sales) + '</b></div><div class="stat"><span>Credit given</span><b class="' + (t.credit ? 'red' : '') + '">' + money(t.credit) + '</b></div>' +
+    '<div class="stat"><span>Cash received</span><b>' + money(t.cash) + '</b></div><div class="stat"><span>MoMo received</span><b>' + money(t.momo) + '</b></div>' +
+    '<div class="stat violet wide"><span>Cash I must hand to the owner</span><b>' + money(m.cashHeld) + '</b></div></div>';
+  if (S.failed.length) {
+    h += '<h2>Could not be saved</h2><div class="card">' + S.failed.map(f => '<div class="line"><div><div class="nm">' + esc(f.type === 'sale' ? 'Sale to ' + f.customer : f.type === 'payment' ? 'Payment from ' + f.customer : 'Customer ' + f.name) + '</div><div class="small red">' + esc(errText(f.error)) + '</div></div><button class="btn sm danger" data-act="discard" data-id="' + esc(f.id) + '">Remove</button></div>').join('') + '</div>';
+  }
+  h += '<h2>My bills today (' + m.bills.length + ')</h2>';
+  if (!m.bills.length) h += '<div class="empty">No sales yet today.</div>';
+  else h += '<div class="card" style="padding:4px 14px">' + m.bills.slice().reverse().map(b => {
+    const bal = r2(b.total - b.cash - b.momo);
+    return '<button class="item" data-act="bill" data-id="' + esc(b.id) + '"><span class="grow"><span class="nm">' + esc(b.customer) + '</span><br><span class="small muted">' + esc(String(b.time).slice(0, 5)) + (b.pending ? ' · not sent yet' : '') + '</span></span><span class="right"><span class="amt">' + money(b.total) + '</span>' + (bal > 0.004 ? '<br><span class="small red">owes ' + money(bal) + '</span>' : '') + '</span></button>';
+  }).join('') + '</div>';
+  return h;
+}
+
+/* ---------------- CUSTOMERS ---------------- */
+function custsHTML() {
+  return '<div style="margin-top:6px"><input id="cq" placeholder="Search customers…" value="' + esc(S.cq) + '" data-in="cq" autocomplete="off"></div>' +
+    '<div class="chips" style="margin-top:8px">' + [['mine', S.session.role === 'admin' ? 'All' : 'Mine'], ['owing', 'Owing'], ['all', 'Everyone']].filter(x => !(S.session.role === 'admin' && x[0] === 'all')).map(x => '<button class="chip ' + (S.cf === x[0] ? 'on' : '') + '" data-act="cf" data-f="' + x[0] + '">' + x[1] + '</button>').join('') +
+    '<button class="chip" data-act="newcust2">+ New</button></div><div id="custlist"></div>';
+}
+function renderCustList() {
+  const host = $('#custlist'); if (!host) return;
+  const d = derived(), me = kk(S.session.name), admin = S.session.role === 'admin', q = kk(S.cq);
+  let list = d.customers.filter(c => (!q || kk(c.name).includes(q) || kk(c.location).includes(q)) &&
+    (S.cf === 'all' || admin || kk(c.person) === me) && (S.cf !== 'owing' || c.balance > 0.004));
+  list.sort((a, b) => (b.balance || 0) - (a.balance || 0) || a.name.localeCompare(b.name));
+  const owed = sum(list, c => Math.max(0, c.balance || 0));
+  host.innerHTML = '<p class="small muted" style="margin:4px 2px">' + list.length + ' customer(s)' + (owed > 0 ? ' · owing ' + money(owed) : '') + '</p>' +
+    (list.length ? '<div class="card" style="padding:4px 14px">' + list.slice(0, 200).map(c => '<button class="item" data-act="cust" data-n="' + esc(c.name) + '"><span class="avatar">' + esc(initials(c.name)) + '</span><span class="grow"><span class="nm">' + esc(c.name) + '</span><br><span class="small muted">' + esc(c.location || '') + (admin && c.person ? (c.location ? ' · ' : '') + esc(c.person) : '') + (c.last ? ' · last ' + esc(c.last.slice(5)) : '') + '</span></span>' +
+      (c.balance > 0.004 ? '<span class="amt red">' + money(c.balance) + '</span>' : c.balance != null ? '<span class="badge green">clear</span>' : '') + '</button>').join('') + '</div>' : '<div class="empty">No customers here yet.</div>');
+}
+function customerSheet(name) {
+  const c = derived().customers.find(x => kk(x.name) === kk(name)); if (!c) return;
+  const known = c.balance != null;
+  sheet('<h2>' + esc(c.name) + '</h2><p class="muted small" style="margin:0 0 8px">' + esc([c.location, c.phone, 'Sales person: ' + c.person].filter(Boolean).join(' · ')) + '</p>' +
+    (known ? '<div class="stats"><div class="stat"><span>Owes</span><b class="' + (c.balance > 0.004 ? 'red' : 'green') + '">' + money(Math.max(0, c.balance)) + '</b></div><div class="stat"><span>Last bought</span><b style="font-size:17px">' + esc(c.last || '-') + '</b></div></div><br>' : '') +
+    '<div class="row"><button class="btn primary grow" data-act="sellto" data-n="' + esc(c.name) + '">Sell</button>' +
+    (known && c.balance > 0.004 ? '<button class="btn violet grow" data-act="collect" data-n="' + esc(c.name) + '">Collect payment</button>' : '') + '</div>' +
+    (c.phone ? '<div class="row" style="margin-top:10px"><a class="btn grow" style="text-align:center;text-decoration:none" href="tel:' + esc(c.phone) + '">Call</a>' +
+      '<a class="btn grow" style="text-align:center;text-decoration:none" target="_blank" rel="noopener" href="' + esc(waLink(c.phone, known && c.balance > 0.004 ? 'Hello ' + c.name + ', your balance with ' + ((S.cache && S.cache.business) || 'KL Bread') + ' is ' + money(c.balance) + '. Thank you.' : 'Hello ' + c.name)) + '">WhatsApp</a></div>' : ''));
+}
+function collectSheet(name) {
+  const c = derived().customers.find(x => kk(x.name) === kk(name));
+  sheet('<h2>Collect payment</h2><p class="muted" style="margin:0">' + esc(name) + ' owes <b class="red">' + money(c ? c.balance : 0) + '</b></p>' +
+    '<div class="picker"><div><label>Cash received</label><input id="pc" type="number" inputmode="decimal" min="0" placeholder="0"></div><div><label>MoMo received</label><input id="pm" type="number" inputmode="decimal" min="0" placeholder="0"></div></div><br>' +
+    '<button class="btn primary block" data-act="savepay" data-n="' + esc(name) + '">Save payment</button>');
+}
+async function savePayment(name) {
+  const cash = r2(+$('#pc').value || 0), momo = r2(+$('#pm').value || 0);
+  if (cash + momo <= 0) { toast('Enter the amount received'); return; }
+  const op = { type: 'payment', id: uid('P'), ts: Date.now(), date: today(), time: nowTime(), customer: name, cash, momo, person: S.session.name };
+  S.queue.push(op); await putOne('queue', op); closeSheet(); render(true); toast('Payment saved: ' + money(cash + momo)); syncSoon();
+}
+
+/* ---------------- OWNER: DASHBOARD ---------------- */
+async function fetchReport(force) {
+  if (S.session.role !== 'admin') return;
+  try {
+    const r = await api('report', { year: S.sel.year, month: S.sel.month });
+    if (r.ok) { S.rep = r; S.repFresh = true; await kvSet('report', r); }
+    else if (r.error === 'bad_key') S.keyBad = true;
+  } catch (e) { S.repFresh = false; if (force) toast('No internet - showing the last saved numbers'); }
+  if (S.tab === 'dash' || S.tab === 'cash') render(true);
+}
+function bars(vals, selIdx, labels, every) {
+  const max = Math.max.apply(null, vals.concat([1])), top = Math.max.apply(null, vals);
+  return '<div class="bars">' + vals.map((v, i) => '<div class="' + (i === selIdx ? 'sel' : v === top && v > 0 ? 'hi' : '') + '" style="height:' + Math.max(2, Math.round(v / max * 100)) + '%" title="' + esc(labels[i]) + ': ' + money(v) + '"></div>').join('') + '</div>' +
+    '<div class="axis">' + labels.map((l, i) => '<span>' + (i % every === 0 ? esc(l) : '') + '</span>').join('') + '</div>';
+}
+function dashHTML() {
+  const r = S.rep, now = new Date(), yrs = (r && r.years) || [now.getFullYear()];
+  const picker = '<div class="picker" style="margin-top:6px"><select data-ch="month">' + MONTHS.map((m, i) => '<option value="' + (i + 1) + '"' + (S.sel.month === i + 1 ? ' selected' : '') + '>' + m + '</option>').join('') + '</select>' +
+    '<select data-ch="year">' + yrs.map(y => '<option' + (S.sel.year === y ? ' selected' : '') + '>' + y + '</option>').join('') + '</select></div>';
+  if (!r) return picker + '<div class="empty">' + (navigator.onLine ? 'Loading the numbers…' : 'Connect to the internet once to see the dashboard.') + '</div>';
+  const stale = r.year !== S.sel.year || r.month !== S.sel.month;
+  const coll = t => t.cash + t.momo, ml = MONTHS[r.month - 1] + ' ' + r.year;
+  const top = r.people.length ? Math.max.apply(null, r.people.map(p => p.sales).concat([1])) : 1;
+  let h = picker + (stale ? '<p class="small muted">Showing ' + ml + ' · tap Refresh to load your choice</p>' : '');
+  h += '<div class="stats" style="margin-top:10px"><div class="stat wine"><span>Today sales</span><b>' + money(r.todayTotals.sales) + '</b></div><div class="stat"><span>Today collected</span><b>' + money(coll(r.todayTotals)) + '</b></div></div>';
+  h += '<h2>' + ml +
   
