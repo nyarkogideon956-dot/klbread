@@ -322,8 +322,7 @@ async function boot() {
   window.addEventListener('online', () => { S.online = true; paintStatus(); syncNow(); });
   window.addEventListener('offline', () => { S.online = false; paintStatus(); });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNow(); });
-  setInterval(() => { if (navigator.onLine) syncNow(); }, 60000);
-  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); S.installEvt = e; render(true); });
+  setInterval(() => { if (!navigator.onLine || !S.session) return; const live = S.session.role === 'admin' && (S.tab === 'dash' || S.tab === 'cash'); if (live || S.queue.length || Date.now() - (S.lastSync || 0) > 60000) syncNow(); }, 20000);  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); S.installEvt = e; render(true); });
 }
 function fatal(msg) { $('#app').innerHTML = '<div class="login"><h2>KL Bread</h2><p>' + esc(msg) + '</p></div>'; }
 
@@ -438,10 +437,8 @@ async function doLogin() {
     S.session = { key, name: r.user.name, role: r.user.role };
     await kvSet('session', S.session);
     S.keyBad = false; S.tab = S.session.role === 'admin' ? 'dash' : 'sell';
-    const b = await api('bootstrap');
-    if (b.ok) { S.cache = b; await kvSet('cache', b); }
-    render(); syncNow();
-  } catch (e) {
+    const b = r.boot && r.boot.ok ? r.boot : await api('bootstrap');    if (b.ok) { S.cache = b; await kvSet('cache', b); }
+    render(); if (S.queue.length) syncNow();  } catch (e) {
     S.session = null; err.textContent = 'Could not reach the server. Check your internet and the server link.';
   } finally { const b2 = $('#lbtn'); if (b2) { b2.disabled = false; b2.textContent = 'Sign in'; } }
 }
