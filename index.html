@@ -764,7 +764,7 @@ const ACT = {
   sync: () => syncNow(true),
   menu: () => sheet('<h2>Menu</h2><div class="stats"><div class="stat wide"><span>Signed in as</span><b style="font-size:17px">' + esc(S.session.name) + '</b></div></div><br><button class="btn block" data-act="sync2">Send & refresh now</button><br><button class="btn danger block" data-act="logout2">Sign out</button><p class="small muted">Version 1 · ' + S.queue.length + ' not sent</p>'),
   sync2: () => { closeSheet(); syncNow(true); }, logout2: () => { closeSheet(); logout(); },
-    tab: d => { S.tab = d.t; closeSheet(); render(); window.scrollTo(0, 0); if (d.t === 'dash' || d.t === 'cash') { if (navigator.onLine) fetchReport(); } if (d.t === 'setup' && navigator.onLine) loadLists(); if (d.t === 'history') loadHistory(); }, 'setup' && navigator.onLine) loadLists(); },
+     tab: d => { S.tab = d.t; closeSheet(); render(); window.scrollTo(0, 0); if (d.t === 'dash' || d.t === 'cash') { if (navigator.onLine) fetchReport(); } if (d.t === 'setup' && navigator.onLine) loadLists(); if (d.t === 'history') loadHistory(); },
   update: () => { if (swReg && swReg.waiting) swReg.waiting.postMessage('SKIP'); },
   hideios: () => { localStorage.setItem('kl_ios', '1'); render(true); },
   install: async () => { if (S.installEvt) { S.installEvt.prompt(); await S.installEvt.userChoice; S.installEvt = null; render(true); } },
