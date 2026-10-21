@@ -1,6 +1,6 @@
 /* KL Bread service worker: keeps the app working with no signal.
    Bump VERSION whenever any app file changes. */
-const VERSION = 'kl-bread-v3';
+const VERSION = 'kl-bread-v4';
 const FILES = ['./', 'index.html', 'manifest.webmanifest'];
 
 self.addEventListener('install', e => {
