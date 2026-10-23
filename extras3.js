@@ -63,11 +63,28 @@
     await loadRecords(); await refreshCache(); await fetchReport(true);
   };
 
+
+  /* ---------- owner: all debts summary on the Dashboard ---------- */
+  function ownerDebts() {
+    const st = document.querySelector('main.wrap .stats'); if (!st || document.getElementById('xdebts')) return;
+    const list = derived().customers.filter(c => (c.balance || 0) > 0.004);
+    const total = r2(sum(list, c => c.balance)), by = {};
+    list.forEach(c => { const k = c.person || '(no sales person)'; (by[k] = by[k] || []).push(c); });
+    const persons = Object.keys(by).map(k => ({ name: k, rows: by[k].sort((a, b) => b.balance - a.balance), total: r2(sum(by[k], c => c.balance)) })).sort((a, b) => b.total - a.total);
+    const openAll = list.length <= 12;
+    let h = '<h2 id="xdebts">All debts · ' + money(total) + '</h2>';
+    if (!list.length) h += '<div class="card"><div class="small muted">Nobody owes you right now.</div></div>';
+    else h += '<div class="card" style="padding:4px 14px"><div class="small muted" style="padding:8px 0">' + list.length + ' customer(s) owing. Tap a name to collect payment or add an old debt.</div>' + persons.map(p =>
+      '<details' + (openAll ? ' open' : '') + ' style="border-top:1px solid var(--line)"><summary style="display:flex;justify-content:space-between;gap:10px;padding:12px 0;cursor:pointer;list-style:none"><b>' + esc(p.name) + ' <span class="small muted">(' + p.rows.length + ')</span></b><b class="red">' + money(p.total) + '</b></summary>' +
+      p.rows.map(c => '<button class="item" data-act="cust" data-n="' + esc(c.name) + '"><span class="grow"><span class="nm">' + esc(c.name) + '</span>' + (c.last ? '<br><span class="small muted">last bought ' + esc(c.last) + '</span>' : '') + '</span><span class="right"><span class="amt red">' + money(c.balance) + '</span></span></button>').join('') + '</details>').join('') + '</div>';
+    st.insertAdjacentHTML('afterend', h);
+  }
   /* ---------- who owes me (sales person Today tab) ---------- */
   Object.assign(ERR, { bad_amount: 'Type an amount of 0 or more.' });
   const _render3 = KL.fn('render');
   KL.setFn('render', function (k) {
     _render3(k);
+    if (S.session && S.session.role === 'admin' && S.tab === 'dash') { ownerDebts(); return; }
     if (!S.session || S.session.role === 'admin' || S.tab !== 'today') return;
     const st = document.querySelector('main.wrap .stats'); if (!st || document.getElementById('xowing')) return;
     const me = kk(S.session.name);
