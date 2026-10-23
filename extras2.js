@@ -4,7 +4,7 @@
   if (!KL) return;
   const { S, ACT, ERR, ICON, api, uid, esc, money, r2, sum, kk, $, today, nowTime, toast, sheet, closeSheet, putOne, derived, fetchReport, refreshCache, syncSoon, errText, WALKIN } = KL;
   const render = k => KL.fn('render')(k);
-  const { ex, stamp, notesFor, editsFor, openNotes, infoHTML, billReceiptHTML } = KL.x || {};
+  const { dLong, ex, stamp, notesFor, editsFor, openNotes, infoHTML, billReceiptHTML } = KL.x || {};
   if (!ex) return;
   const X = KL.X;
   /* ---------- owner: Team tab ---------- */
@@ -44,14 +44,8 @@
     if (X.loading || !X.data || X.data.person !== X.person) return h + '<div class="empty">Loading…</div>';
     const d0 = X.data;
     h += '<div class="stats" style="margin-top:10px"><div class="stat violet wide"><span>Cash ' + esc(X.person) + ' must hand to the owner</span><b>' + money(d0.cashHeld) + '</b></div></div>';
-    if (!d0.days.length) return h + '<div class="empty">No sales in the last 30 days.</div>';
-    d0.days.forEach(d => {
-      h += '<h2>' + esc(d.date) + ' · sales ' + money(d.sales) + ' · received ' + money(d.collected) + '</h2><div class="card" style="padding:4px 14px">' + d.rows.map(r => {
-        if (r.kind === 'pay') return '<div class="item"><span class="grow"><span class="nm">' + esc(r.customer) + '</span><br><span class="small muted">' + esc(r.time) + ' · debt payment</span></span><span class="right"><span class="amt">' + money(r.total) + '</span></span></div>';
-        const bal = r2(r.total - r.cash - r.momo), tags = (editsFor(r.id).length ? ' · <b style="color:var(--violet)">corrected</b>' : '') + (notesFor(r.id).length ? ' · <b class="red">note</b>' : '');
-        return '<button class="item" data-act="xbill" data-id="' + esc(r.id) + '"><span class="grow"><span class="nm">' + esc(r.customer) + '</span><br><span class="small muted">' + esc(r.time) + ' · ' + esc(r.items.map(i => i.q + ' ' + i.p).join(', ')) + tags + '</span></span><span class="right"><span class="amt">' + money(r.total) + '</span>' + (bal > 0.004 ? '<br><span class="small red">owes ' + money(bal) + '</span>' : '') + '</span></button>';
-      }).join('') + '</div>';
-    });
+    h += '<p class="small muted" style="margin:8px 2px 0">Pick a day to see everything ' + esc(X.person) + ' did.</p>';
+    h += KL.x.dayView(d0.days, true);
     return h;
   }
   ACT.xperson = d => { X.person = d.p; X.data = null; loadTeam(); };
@@ -103,4 +97,54 @@
     await refreshCache(); await loadTeam(); await fetchReport(true);
   };
   if (S.session) render(true);
+
+  /* ---------- bread given out / brought back ---------- */
+  Object.assign(ERR, { bad_stock: 'Bread brought back cannot be more than bread given out.', unknown_product: 'That bread is not in the product list.', unknown_person: 'Choose a sales person first.', bad_date: 'That day cannot be changed.' });
+  const SK = X.stock = {};
+  const stockPerson = () => S.session.role === 'admin' ? X.person : S.session.name;
+  function loadStock(k) {
+    if (!k || !navigator.onLine) return;
+    const c = SK[k] || (SK[k] = {}); if (c.loading) return;
+    c.loading = true;
+    api('x', { op: 'stockget', person: k, today: today() }).then(r => { c.loading = false; c.tried = true; if (r.ok) c.days = r.days; if (S.tab === 'history' || S.tab === 'team') render(true); }).catch(() => { c.loading = false; c.tried = true; });
+  }
+  KL.x.stockBox = function (date, owner) {
+    const k = stockPerson(); if (!k) return '';
+    const c = SK[k]; if (!c || (!c.days && !c.tried)) loadStock(k);
+    const day = c && c.days && c.days.find(d => d.date === date);
+    const btn = owner ? '<button class="btn block" style="margin-top:8px" data-act="xstock" data-d="' + esc(date) + '">' + (day ? 'Change bread record' : 'Record bread given out') + '</button>' : '';
+    if (!day) return owner ? '<div class="card" style="margin-top:10px"><b>Bread for the day</b><p class="small muted" style="margin:4px 0 0">Nothing recorded yet for this day.</p>' + btn + '</div>' : '';
+    let tO = 0, tB = 0, tS = 0, tM = 0;
+    const rows = day.items.map(i => {
+      const miss = r2(i.out - i.back - i.sold); tO += i.out; tB += i.back; tS += i.sold; tM += miss;
+      return '<tr><td>' + esc(i.p) + '</td><td>' + i.out + '</td><td>' + i.back + '</td><td>' + i.sold + '</td><td>' + (miss > 0.004 ? '<b class="red">' + miss + '</b>' : miss < -0.004 ? '<b>+' + (-miss) + '</b>' : '0') + '</td></tr>';
+    }).join('');
+    const note = tM > 0.004 ? '<b class="red">' + r2(tM) + ' missing</b> (given out, not sold and not brought back)' : tM < -0.004 ? 'Sold more than recorded. Check the numbers.' : 'Everything is accounted for.';
+    return '<div class="card" style="margin-top:10px"><b>Bread for the day</b><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:6px"><tr class="small muted" style="text-align:left"><th>Bread</th><th>Out</th><th>Back</th><th>Sold</th><th>Missing</th></tr>' + rows +
+      '<tr style="border-top:1.5px solid var(--line);font-weight:700"><td>Total</td><td>' + r2(tO) + '</td><td>' + r2(tB) + '</td><td>' + r2(tS) + '</td><td>' + r2(tM) + '</td></tr></table></div><p class="small" style="margin:8px 0 0">' + note + '</p>' + btn + '</div>';
+  };
+  const _tab2 = ACT.tab;
+  ACT.tab = d => { if (d.t === 'history' && S.session && S.session.role !== 'admin') delete SK[S.session.name]; _tab2(d); };
+  const _xperson = ACT.xperson;
+  ACT.xperson = d => { delete SK[d.p]; _xperson(d); };
+  ACT.xstock = d => {
+    const k = X.person; if (!k) return;
+    const c = SK[k], day = c && c.days && c.days.find(x => x.date === d.d), cur = {};
+    if (day) day.items.forEach(i => { cur[i.p] = i; });
+    const prods = ((S.cache && S.cache.products) || []).filter(p => p.active !== false);
+    const inp = (id, v) => '<input id="' + id + '" type="number" inputmode="numeric" min="0" value="' + (v || '') + '" placeholder="0" style="width:100%;font:inherit;padding:10px;border:1.5px solid var(--line);border-radius:10px">';
+    sheet('<h2>Bread for ' + esc(k) + '</h2><p class="small muted">' + esc(dLong(d.d)) + '. Write how many he took out, and how many he brought back. Leave empty if none.</p>' +
+      '<div style="display:grid;grid-template-columns:1fr 78px 78px;gap:8px;align-items:center"><b class="small muted">Bread</b><b class="small muted">Out</b><b class="small muted">Back</b>' +
+      prods.map((p, i) => '<span>' + esc(p.name) + '</span>' + inp('xso' + i, cur[p.name] && cur[p.name].out) + inp('xsb' + i, cur[p.name] && cur[p.name].back)).join('') + '</div>' +
+      '<button class="btn primary block" style="margin-top:12px" data-act="xstocksave" data-d="' + esc(d.d) + '">Save</button>');
+    X.stockProds = prods.map(p => p.name);
+  };
+  ACT.xstocksave = async d => {
+    const items = (X.stockProds || []).map((p, i) => ({ p, out: +$('#xso' + i).value || 0, back: +$('#xsb' + i).value || 0 }));
+    if (items.some(i => i.back > i.out)) { toast('Back cannot be more than out'); return; }
+    try {
+      const r = await api('x', { op: 'stockset', person: X.person, date: d.d, today: today(), items });
+      if (r.ok) { SK[X.person] = { days: r.days, tried: true }; closeSheet(); toast('Saved'); render(true); } else toast(errText(r.error));
+    } catch (e) { toast('Needs internet'); }
+  };
 })();
