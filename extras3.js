@@ -72,7 +72,18 @@
     list.forEach(c => { const k = c.person || '(no sales person)'; (by[k] = by[k] || []).push(c); });
     const persons = Object.keys(by).map(k => ({ name: k, rows: by[k].sort((a, b) => b.balance - a.balance), total: r2(sum(by[k], c => c.balance)) })).sort((a, b) => b.total - a.total);
     const openAll = list.length <= 12;
-    let h = '<h2 id="xdebts">All debts · ' + money(total) + '</h2>';
+    let h = '';
+    const rp = (S.rep && S.rep.people) || [];
+    if (rp.length) {
+      const MONS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], gt = f => r2(sum(rp, p => p[f] || 0));
+      const num = v => money(v).replace(/^GH\S+\s*/, '');
+      const cell = (v, c) => '<span style="text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums" class="' + (c || '') + '">' + num(v) + '</span>';
+      h += '<h2 id="xdebts">Sales persons summary · ' + MONS[(S.rep.month || 1) - 1] + ' <span class="small muted">(GH₵)</span></h2><div class="card" style="padding:6px 14px;overflow-x:auto"><div style="display:grid;grid-template-columns:minmax(80px,1.2fr) repeat(3,minmax(70px,1fr));gap:6px 8px;align-items:baseline;font-size:14px;min-width:300px">' +
+        '<b class="small muted">Name</b><b class="small muted" style="text-align:right">Sales</b><b class="small muted" style="text-align:right">Debt</b><b class="small muted" style="text-align:right">Cash held</b>' +
+        rp.map(p => '<span><b>' + esc(p.name) + '</b></span>' + cell(p.sales) + cell(p.owed, p.owed > 0.004 ? 'red' : '') + cell(p.cashHeld)).join('') +
+        '<b style="border-top:1.5px solid var(--line);padding-top:8px">Total</b><b style="border-top:1.5px solid var(--line);padding-top:8px;text-align:right;white-space:nowrap">' + num(gt('sales')) + '</b><b class="red" style="border-top:1.5px solid var(--line);padding-top:8px;text-align:right;white-space:nowrap">' + num(gt('owed')) + '</b><b style="border-top:1.5px solid var(--line);padding-top:8px;text-align:right;white-space:nowrap">' + num(gt('cashHeld')) + '</b></div></div>';
+    }
+    h += '<h2>All debts · ' + money(total) + '</h2>';
     if (!list.length) h += '<div class="card"><div class="small muted">Nobody owes you right now.</div></div>';
     else h += '<div class="card" style="padding:4px 14px"><div class="small muted" style="padding:8px 0">' + list.length + ' customer(s) owing. Tap a name to collect payment or add an old debt.</div>' + persons.map(p =>
       '<details' + (openAll ? ' open' : '') + ' style="border-top:1px solid var(--line)"><summary style="display:flex;justify-content:space-between;gap:10px;padding:12px 0;cursor:pointer;list-style:none"><b>' + esc(p.name) + ' <span class="small muted">(' + p.rows.length + ')</span></b><b class="red">' + money(p.total) + '</b></summary>' +
