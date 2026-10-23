@@ -836,8 +836,16 @@ document.addEventListener('change', e => {
 });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && $('#lkey') && document.activeElement && document.activeElement.id === 'lkey') doLogin(); });
 
+window.KL = {
+  S, ACT, ERR, ICON, api, uid, esc, money, r2, sum, kk, $, today, nowTime, toast, sheet, closeSheet, putOne, delOne, derived, fetchReport, refreshCache, syncSoon, errText, WALKIN,
+  fn: n => ({ render, tabsFor, historyHTML, receiptSheet, cashHTML }[n]),
+  setFn: (n, f) => { if (n === 'render') render = f; else if (n === 'tabsFor') tabsFor = f; else if (n === 'historyHTML') historyHTML = f; else if (n === 'receiptSheet') receiptSheet = f; else if (n === 'cashHTML') cashHTML = f; }
+};
 boot();
 })();
+<script src="extras.js"></script>
+<script src="extras2.js"></script>
+<script src="extras3.js"></script>
 </script>
 </body>
 </html>
