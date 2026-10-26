@@ -106,13 +106,13 @@
   const _render3 = KL.fn('render');
   KL.setFn('render', function (k) {
     _render3(k);
-    if (S.session && S.session.role === 'admin' && S.tab === 'dash') { ownerDebts(); return; }
+    if (S.session && S.session.role === 'admin' && S.tab === 'dash') { ownerDay(); ownerDebts(); return; }
     if (!S.session || S.session.role === 'admin' || S.tab !== 'today') return;
     const st = document.querySelector('main.wrap .stats'); if (!st || document.getElementById('xowing')) return;
     const me = kk(S.session.name);
     const list = derived().customers.filter(c => kk(c.person) === me && (c.balance || 0) > 0.004).sort((a, b) => b.balance - a.balance);
     const total = r2(sum(list, c => c.balance));
-    st.insertAdjacentHTML('afterend', '<h2 id="xowing">Who owes me' + (list.length ? ' · ' + money(total) : '') + '</h2><div class="card" style="padding:4px 14px">' +
+    st.insertAdjacentHTML('afterend', closeCardHTML() + '<h2 id="xowing">Who owes me' + (list.length ? ' · ' + money(total) : '') + '</h2><div class="card" style="padding:4px 14px">' +
       (list.length ? list.map(c => '<button class="item" data-act="cust" data-n="' + esc(c.name) + '"><span class="grow"><span class="nm">' + esc(c.name) + '</span></span><span class="right"><span class="amt red">' + money(c.balance) + '</span></span></button>').join('') : '<div class="small muted" style="padding:10px 0">Nobody owes you right now.</div>') + '</div>');
   });
 
@@ -252,5 +252,81 @@
     const t = val('xnt').trim(); if (!t) return null;
     return { title: 'Check your note', rows: [['html', '<div style="padding:8px 0;overflow-wrap:anywhere">' + esc(t) + '</div>']] };
   });
+
+  /* ---------- sign-in time ---------- */
+  function ping() {
+    if (!S.session || !navigator.onLine) return;
+    try { const last = +sessionStorage.getItem('kl_ping') || 0; if (Date.now() - last < 15 * 60000) return; sessionStorage.setItem('kl_ping', String(Date.now())); } catch (e) { /* ignore */ }
+    api('x', { op: 'ping' }).catch(() => { });
+  }
+  const _login = ACT.login;
+  if (_login) ACT.login = async function (d, a, e) { const r = await _login.call(this, d, a, e); setTimeout(ping, 1500); return r; };
+  setTimeout(ping, 2500);
+
+  /* ---------- sales person: close the day (count the cash) ---------- */
+  Object.assign(ERR, { sales_only: 'Only sales persons close the day.' });
+  const CD = { data: null, loading: false, tried: false };
+  function loadClose() {
+    if (CD.loading || !navigator.onLine) return; CD.loading = true;
+    api('x', { op: 'mystatus' }).then(r => { CD.loading = false; CD.tried = true; if (r.ok) CD.data = r; if (S.tab === 'today') render(true); }).catch(() => { CD.loading = false; CD.tried = true; });
+  }
+  const diffText = d => d < -0.004 ? '<b class="red">short by ' + money(-d) + '</b>' : d > 0.004 ? '<b>extra ' + money(d) + '</b>' : '<b class="green">exact</b>';
+  function closeCardHTML() {
+    if (!CD.data && !CD.tried) loadClose();
+    const c = CD.data && CD.data.closed;
+    if (c) return '<div class="card" style="margin-top:10px"><b>Day closed at ' + esc(c.at) + '</b><div class="small" style="margin-top:4px">Counted ' + money(c.counted) + ' · should have ' + money(c.expected) + ' · ' + diffText(c.diff) + '</div><button class="btn sm" style="margin-top:8px" data-act="xclose">Count again</button></div>';
+    return '<button class="btn violet block" style="margin-top:10px" data-act="xclose">Close day · count my cash</button>';
+  }
+  ACT.xclose = async () => {
+    if (!navigator.onLine) { toast('Needs internet'); return; }
+    if (S.queue.length) { toast('Send your sales first: open the menu and tap Sync'); return; }
+    let exp = 0;
+    try { const r = await api('x', { op: 'mystatus' }); if (r.ok) { CD.data = r; exp = r.expected; } } catch (e) { toast('Needs internet'); return; }
+    sheet('<h2>Close day</h2><p class="small muted">Count all the cash in your hand. Type the amount. The app compares it with what your sales say you should have.</p>' +
+      '<div class="stats"><div class="stat violet wide"><span>You should have</span><b>' + money(exp) + '</b></div></div>' +
+      '<label>Cash I counted (GH₵)</label><input id="xcc" type="number" inputmode="decimal" min="0" placeholder="0" style="width:100%;font:inherit;padding:12px;border:1.5px solid var(--line);border-radius:12px">' +
+      '<label style="margin-top:10px;display:block">Note (optional)</label><input id="xcn" maxlength="200" placeholder="Example: bread given to a customer" style="width:100%;font:inherit;padding:12px;border:1.5px solid var(--line);border-radius:12px">' +
+      '<button class="btn primary block" style="margin-top:12px" data-act="xclosesave" data-e="' + exp + '">Close day</button>');
+  };
+  ACT.xclosesave = async d => {
+    const counted = $('#xcc').value, note = $('#xcn').value || '';
+    try {
+      const r = await api('x', { op: 'closeday', counted, note });
+      if (!r.ok) { toast(errText(r.error)); return; }
+      CD.data = { ok: true, closed: r.closed, expected: r.expected }; KL.closeSheet(); toast('Day closed at ' + r.closed.at); render(true);
+    } catch (e) { toast('Needs internet'); }
+  };
+  guard('xclosesave', d => {
+    const v = val('xcc'); if (v === '' || !(+v >= 0)) return null;
+    const exp = +d.e || 0, diff = r2(+v - exp);
+    return { title: 'Check your cash count', rows: [['You should have', money(exp)], ['You counted', money(+v)], ['Difference', diff < -0.004 ? 'short by ' + money(-diff) : diff > 0.004 ? 'extra ' + money(diff) : 'exact', diff < -0.004 ? 'red' : diff > 0.004 ? '' : 'green'], ['html', '<div class="small muted" style="padding:6px 0">The owner will see the time and the difference.</div>']] };
+  });
+
+  /* ---------- owner: day report on the Dashboard ---------- */
+  const DY = { date: null, data: null, loading: false };
+  function loadDay() {
+    if (!navigator.onLine) return; DY.loading = true; const want = DY.date;
+    api('x', { op: 'dayreport', date: want }).then(r => { DY.loading = false; if (r.ok && DY.date === want) DY.data = r; if (S.tab === 'dash') render(true); }).catch(() => { DY.loading = false; });
+  }
+  function ownerDay() {
+    const pk = document.querySelector('main.wrap .picker'); if (!pk || document.getElementById('xdaycard')) return;
+    if (!DY.date) DY.date = today();
+    if (!DY.data || DY.data.date !== DY.date) { if (!DY.loading) loadDay(); }
+    const d = DY.data && DY.data.date === DY.date ? DY.data : null;
+    let h = '<div class="card" id="xdaycard" style="margin-top:10px"><div class="row between" style="gap:10px;align-items:center"><h3 style="margin:0">Pick a day</h3><input id="xdd" type="date" value="' + esc(DY.date) + '" max="' + esc(today()) + '" style="font:inherit;padding:8px;border:1.5px solid var(--line);border-radius:10px"></div>';
+    if (!d) h += '<p class="small muted">Loading…</p>';
+    else {
+      const t = f => r2(sum(d.people, p => p[f] || 0));
+      h += '<div class="small muted" style="margin:6px 0">Total sales <b>' + money(t('sales')) + '</b> · cash ' + money(t('cash')) + ' · MoMo ' + money(t('momo')) + ' · credit ' + money(t('credit')) + ' · debts paid ' + money(t('debtIn')) + '</div>';
+      h += d.people.map(p => {
+        const seen = p.firstSeen ? 'Signed in ' + esc(p.firstSeen) + (p.lastSeen && p.lastSeen !== p.firstSeen ? ' · last seen ' + esc(p.lastSeen) : '') : 'Not seen';
+        const sales = p.firstSale ? 'Sales ' + esc(p.firstSale) + ' to ' + esc(p.lastSale) : 'No sales';
+        const cl = p.closed ? 'Closed ' + esc(p.closed.at) + ' · counted ' + money(p.closed.counted) + ' of ' + money(p.closed.expected) + ' · ' + diffText(p.closed.diff) : '<span class="muted">Day not closed</span>';
+        return '<div style="border-top:1px solid var(--line);padding:8px 0"><div class="row between"><b>' + esc(p.name) + '</b><b>' + money(p.sales) + '</b></div><div class="small muted">' + p.bills + ' bill(s) · cash ' + money(p.cash) + ' · MoMo ' + money(p.momo) + ' · credit ' + money(p.credit) + (p.debtIn ? ' · debts paid ' + money(p.debtIn) : '') + (p.handed ? ' · handed over ' + money(p.handed) : '') + '</div><div class="small">' + seen + ' · ' + sales + '</div><div class="small">' + cl + '</div></div>';
+      }).join('');
+    }
+    pk.insertAdjacentHTML('afterend', h + '</div>');
+  }
+  document.addEventListener('change', e => { if (e.target && e.target.id === 'xdd' && e.target.value) { DY.date = e.target.value; DY.data = null; render(true); } });
   if (S.session) render(true);
 })();
