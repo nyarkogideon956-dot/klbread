@@ -1,531 +1,579 @@
-/* KL Bread - owner: records list, delete with confirmation, start fresh (loaded after extras2.js) */
-(function () {
-  const KL = window.KL;
-  if (!KL) return;
-  const { S, ACT, ERR, api, uid, nowTime, esc, money, $, today, WALKIN, toast, sheet, closeSheet, refreshCache, fetchReport, derived, kk, sum, r2, errText } = KL;
-  const X = KL.X || {};
-  const render = k => KL.fn('render')(k);
-  const delOne = KL.delOne;
-  Object.assign(ERR, { already_live: 'The app is already live, so it cannot be cleared again.', not_confirmed: 'Type DELETE ALL to confirm.', wrong_key: 'That owner key is not correct.' });
+/* KL Bread - bread given out / brought back each day (file: Extra3.gs) */
 
-  async function loadRecords() {
-    if (!S.session || S.session.role !== 'admin' || !navigator.onLine) return;
-    try { const r = await api('x', { op: 'records', days: 30 }); if (r.ok) S.recs = r; } catch (e) { /* ignore */ }
-    if (S.tab === 'cash') render(true);
+var STOCK_HEAD = ['Date', 'Sales Person', 'Product', 'Given out', 'Brought back', 'Recorded by', 'Recorded at'];
+
+function stockSheet_() {
+  var ss = ss_(), s = ss.getSheetByName('Stock');
+  if (!s) {
+    s = ss.insertSheet('Stock');
+    s.getRange(1, 1, 1, STOCK_HEAD.length).setValues([STOCK_HEAD]).setFontWeight('bold');
+    s.getRange(1, 1, s.getMaxRows(), 3).setNumberFormat('@');
   }
-  function recDesc(x) {
-    if (x.kind === 'sale') return 'Sale to ' + x.customer + ' by ' + x.person + ', ' + x.date + ' ' + x.time + ' - ' + x.items.map(i => i.q + ' ' + i.p).join(', ') + ' - ' + money(x.total);
-    if (x.kind === 'pay') return 'Debt payment from ' + x.customer + ' to ' + x.person + ', ' + x.date + ' - ' + money(x.total);
-    return (x.type === 'Bank' ? 'Sent to bank' : 'Handed over by ' + x.person) + ', ' + x.date + ' - ' + money(x.total);
+  return s;
+}
+function stockRows_() {
+  var s = stockSheet_(), last = s.getLastRow();
+  if (last < 2) return [];
+  return s.getRange(2, 1, last - 1, STOCK_HEAD.length).getValues().filter(function (r) { return String(r[0]).trim() !== ''; });
+}
+
+function extra3_(user, req) {
+  if (req.op === 'stockget') return stockGet_(user, req);
+  if (req.op === 'stockset') { requireAdmin_(user); return stockSet_(user, req); }
+  if (req.op === 'openget') { requireAdmin_(user); return openGet_(); }
+  if (req.op === 'openset') { requireAdmin_(user); return openSet_(user, req); }
+  if (req.op === 'ping') return ping_(user);
+  if (req.op === 'closeday') return closeDay_(user, req);
+  if (req.op === 'mystatus') return myStatus_(user, req);
+  if (req.op === 'dayreport') { requireAdmin_(user); return dayReport_(req); }
+  if (req.op === 'custrename') { requireAdmin_(user); return custRename_(user, req); }
+  if (req.op === 'recon') { requireAdmin_(user); return recon_(req); }
+  if (req.op === 'weeksheet') { requireAdmin_(user); return weekSheet_(req); }
+  if (req.op === 'clearpreview') { requireAdmin_(user); return clearPreview_(req); }
+  if (req.op === 'clearrun') { requireAdmin_(user); return clearRun_(user, req); }
+  if (req.op === 'batches') { requireAdmin_(user); return batchList_(); }
+  if (req.op === 'restore') { requireAdmin_(user); return restoreBatch_(user, req); }
+  if (req.op === 'yearhist') { requireAdmin_(user); return yearHist_(req); }
+  if (req.op === 'checkbooks') { requireAdmin_(user); return checkBooks_(req); }
+  if (req.op === 'editpay') { requireAdmin_(user); return editPay_(user, req); }
+  if (req.op === 'edithand') { requireAdmin_(user); return editHand_(user, req); }
+  return null;
+}
+
+// per day and per product: given out, brought back, sold (last 30 days)
+function stockGet_(user, req) {
+  var today = xToday_(req), from = xAgo_(today, 29);
+  var person = user.role === 'admin' ? String(req.person || '') : user.name, me = key_(person);
+  var days = {};
+  function item_(d, p) {
+    if (!days[d]) days[d] = { date: d, items: {} };
+    if (!days[d].items[p]) days[d].items[p] = { p: p, out: 0, back: 0, sold: 0 };
+    return days[d].items[p];
   }
-  function recordsHTML() {
-    const r = S.recs;
-    let h = '<h2>Records - last 30 days</h2>';
-    if (!r) return h + '<div class="empty">' + (navigator.onLine ? 'Loading…' : 'Needs internet.') + '</div>';
-    if (!r.rows.length) h += '<div class="empty">Nothing recorded yet.</div>';
-    else h += '<div class="card" style="padding:4px 14px">' + r.rows.slice(0, 150).map(x => {
-      const top = x.kind === 'sale' ? esc(x.customer) : x.kind === 'pay' ? esc(x.customer) + ' · debt payment' : (x.type === 'Bank' ? 'Sent to bank' : 'Handover · ' + esc(x.person));
-      const sub = esc(x.date + (x.time ? ' ' + x.time : '')) + (x.kind === 'cash' ? '' : ' · ' + esc(x.person)) + (x.kind === 'sale' ? ' · ' + esc(x.items.map(i => i.q + ' ' + i.p).join(', ')) : '');
-      return '<div class="line"><div><div class="nm">' + top + ' · ' + money(x.total) + '</div><div class="small muted">' + sub + '</div></div><span style="display:flex;gap:6px">' + ((x.kind === 'pay' || (x.kind === 'cash' && x.type === 'Handover')) ? '<button class="btn sm" data-act="xeditrec" data-k="' + x.kind + '" data-id="' + esc(x.id) + '">Edit</button>' : '') + '<button class="btn sm danger" data-act="delrec" data-k="' + x.kind + '" data-id="' + esc(x.id) + '">Delete</button></span></div>';
-    }).join('') + '</div>';
-    h += '<h2>Owner tools</h2><div class="card"><button class="btn primary block" data-act="xcheck">Check my books</button><button class="btn block" style="margin-top:8px" data-act="xyear">Year history</button><button class="btn block" style="margin-top:8px" data-act="xclear" data-m="before">Start from a day…</button><button class="btn block" style="margin-top:8px" data-act="xclear" data-m="day">Delete one day…</button><button class="btn block" style="margin-top:8px" data-act="xbatches">Cleared before · Restore</button></div>';
-    h += '<h2>' + (r.live ? 'Danger zone' : 'Ready to start?') + '</h2><div class="card"><p class="small muted" style="margin-top:0">Clears all sales, payments, cash, notes and old debts. Your breads, prices and sales persons stay. A copy is kept in the Google Sheet (Cleared data). You must type your owner key and DELETE ALL.</p><button class="btn danger block" data-act="startfresh">Start fresh</button></div>';
-    return h;
+  var hasStock = {};
+  stockRows_().forEach(function (r) {
+    var d = d_(r[0]);
+    if (key_(r[1]) !== me || d < from || d > today) return;
+    var it = item_(d, String(r[2]));
+    it.out = r2_(it.out + num_(r[3])); it.back = r2_(it.back + num_(r[4]));
+    hasStock[d] = true;
+  });
+  rows_('Sales').forEach(function (r) {
+    var d = d_(r[1]);
+    if (key_(r[3]) !== me || !hasStock[d]) return;
+    var it = item_(d, String(r[5])); it.sold = r2_(it.sold + num_(r[6]));
+  });
+  var list = Object.keys(days).sort().reverse().map(function (k) {
+    var o = days[k]; return { date: o.date, items: Object.keys(o.items).map(function (p) { return o.items[p]; }) };
+  });
+  return { ok: true, person: person, days: list };
+}
+
+// owner records what a sales person took out and brought back on one day (replaces that day's lines)
+function stockSet_(user, req) {
+  var today = xToday_(req), date = String(req.date || ''), person = String(req.person || '').trim();
+  if (!isDate_(date) || date > today || date < xAgo_(today, 30)) throw new Error('bad_date');
+  var p = rows_('People').filter(function (r) { return key_(r[0]) === key_(person); })[0];
+  if (!p) throw new Error('unknown_person');
+  var known = {}; rows_('Products').forEach(function (r) { known[key_(r[0])] = String(r[0]).trim(); });
+  var rows = [], stamp = Utilities.formatDate(new Date(), tz_(), 'yyyy-MM-dd HH:mm');
+  (req.items || []).forEach(function (it) {
+    var name = known[key_(it.p)], out = r2_(num_(it.out)), back = r2_(num_(it.back));
+    if (!name) throw new Error('unknown_product');
+    if (out < 0 || back < 0 || back > out) throw new Error('bad_stock');
+    if (out > 0) rows.push([date, String(p[0]).trim(), name, out, back, user.name, stamp]);
+  });
+  var s = stockSheet_(), last = s.getLastRow();
+  for (var i = last; i >= 2; i--) {
+    var r = s.getRange(i, 1, 1, 2).getValues()[0];
+    if (d_(r[0]) === date && key_(r[1]) === key_(person)) s.deleteRow(i);
   }
-  const _cashHTML = KL.fn('cashHTML');
-  KL.setFn('cashHTML', function () { return _cashHTML() + recordsHTML(); });
-  const _tabAct = ACT.tab;
-  ACT.tab = d => { _tabAct(d); if (d.t === 'cash') loadRecords(); };
+  if (rows.length) s.getRange(Math.max(s.getLastRow(), 1) + 1, 1, rows.length, STOCK_HEAD.length).setValues(rows);
+  return stockGet_(user, { person: person, today: today });
+}
 
-  ACT.delrec = d => {
-    const x = S.recs && S.recs.rows.find(y => y.kind === d.k && y.id === d.id); if (!x) return;
-    sheet('<h2>Delete this record?</h2><p>' + esc(recDesc(x)) + '</p><p class="red small">This removes it from the Google Sheet for good. It cannot be undone' + (x.kind === 'sale' ? ' and it also removes the payment taken with this sale' : '') + '. The deletion is written in the Deleted log.</p><div class="row"><button class="btn grow" data-act="close">Cancel</button><button class="btn danger grow" data-act="dodel" data-k="' + x.kind + '" data-id="' + esc(x.id) + '">Delete permanently</button></div>');
-  };
-  ACT.dodel = async d => {
-    const x = S.recs && S.recs.rows.find(y => y.kind === d.k && y.id === d.id);
-    try {
-      const r = await api('x', { op: 'delete', kind: d.k, id: d.id, detail: x ? recDesc(x) : '' });
-      if (!r.ok) { toast(KL.errText(r.error)); return; }
-    } catch (e) { toast('Needs internet'); return; }
-    KL.closeSheet(); toast('Deleted');
-    await loadRecords(); await refreshCache(); await fetchReport(true);
-  };
-  ACT.startfresh = () => {
-    sheet('<h2 class="red">Start fresh</h2><p class="small muted">This removes all sales, payments, cash records, notes and old debts for everyone. Make sure every phone shows 0 not sent. A copy is kept in the Google Sheet, in a sheet called <b>Cleared data</b>.</p>' +
-      '<label>Customers</label><select id="sfk"><option value="0">Clear customers too</option><option value="1">Keep my customers list</option></select>' +
-      '<label>Type your owner key</label><input id="sfo" type="password" autocomplete="off">' +
-      '<label>Type DELETE ALL to confirm</label><input id="sfc" autocomplete="off">' +
-      '<label style="display:flex;gap:10px;align-items:center;margin-top:12px"><input id="sfu" type="checkbox" style="width:auto"> I understand everyone\'s records will be removed</label>' +
-      '<button class="btn danger block" id="sfgo" data-act="dostart" disabled style="margin-top:12px">Wait 5…</button>');
-    let n = 5; const t = setInterval(() => { const b = document.getElementById('sfgo'); if (!b) { clearInterval(t); return; } n--; if (n > 0) b.textContent = 'Wait ' + n + '…'; else { b.disabled = false; b.textContent = 'Delete everything now'; clearInterval(t); } }, 1000);
-  };
-  ACT.dostart = async () => {
-    const confirm = $('#sfc').value.trim(), ownerKey = $('#sfo').value.trim();
-    if (!ownerKey) { toast('Type your owner key'); return; }
-    if (confirm.toUpperCase() !== 'DELETE ALL') { toast('Type DELETE ALL to confirm'); return; }
-    if (!$('#sfu').checked) { toast('Tick the box to confirm'); return; }
-    if (!navigator.onLine) { toast('Needs internet'); return; }
-    try {
-      const r = await api('x', { op: 'startfresh', confirm, ownerKey, keepCustomers: $('#sfk').value === '1' });
-      if (!r.ok) { toast(KL.errText(r.error)); return; }
-    } catch (e) { toast('Needs internet'); return; }
-    KL.closeSheet(); toast('Done. The app is live.');
-    for (const st of ['queue', 'applied', 'failed']) { for (const o of S[st]) await delOne(st, o.id); S[st] = []; }
-    S.rep = null; S.hist = null; S.recs = null;
-    await loadRecords(); await refreshCache(); await fetchReport(true);
-  };
+/* ---------- old debts from before the app (owner adds them) ---------- */
+var OPEN_HEAD = ['Customer', 'Amount', 'Date', 'Added by', 'Note'];
+var OPEN_ = null;
+
+function openSheet_() {
+  var ss = ss_(), s = ss.getSheetByName('Opening debts');
+  if (!s) {
+    s = ss.insertSheet('Opening debts');
+    s.getRange(1, 1, 1, OPEN_HEAD.length).setValues([OPEN_HEAD]).setFontWeight('bold');
+    s.getRange(1, 1, s.getMaxRows(), 1).setNumberFormat('@');
+  }
+  return s;
+}
+// latest amount entered for each customer
+function openMap_() {
+  if (OPEN_) return OPEN_;
+  var s = openSheet_(), last = s.getLastRow(), m = {};
+  if (last >= 2) s.getRange(2, 1, last - 1, OPEN_HEAD.length).getValues().forEach(function (r) {
+    if (String(r[0]).trim() !== '') m[key_(r[0])] = num_(r[1]);
+  });
+  OPEN_ = m;
+  return m;
+}
+function openingFor_(name) { return openMap_()[key_(name)] || 0; }
+
+function openGet_() {
+  var m = openMap_(), out = {};
+  Object.keys(m).forEach(function (k) { if (m[k] > 0) out[k] = m[k]; });
+  return { ok: true, openings: out };
+}
+function openSet_(user, req) {
+  var name = String(req.customer || '').trim(), amt = r2_(num_(req.amount));
+  if (amt < 0 || amt > 1000000) throw new Error('bad_amount');
+  var c = rows_('Customers').filter(function (r) { return key_(r[0]) === key_(name); })[0];
+  if (!c || key_(name) === key_(WALKIN)) throw new Error('unknown_customer');
+  var s = openSheet_(), stamp = Utilities.formatDate(new Date(), tz_(), 'yyyy-MM-dd HH:mm');
+  s.getRange(Math.max(s.getLastRow(), 1) + 1, 1, 1, OPEN_HEAD.length).setValues([[String(c[0]).trim(), amt, stamp, user.name, String(req.note || '').slice(0, 200)]]);
+  OPEN_ = null;
+  return openGet_();
+}
 
 
-  /* ---------- owner: all debts summary on the Dashboard ---------- */
-  function ownerDebts() {
-    const st = document.querySelector('main.wrap .stats'); if (!st || document.getElementById('xdebts')) return;
-    const list = derived().customers.filter(c => (c.balance || 0) > 0.004);
-    const total = r2(sum(list, c => c.balance)), by = {};
-    list.forEach(c => { const k = c.person || '(no sales person)'; (by[k] = by[k] || []).push(c); });
-    const persons = Object.keys(by).map(k => ({ name: k, rows: by[k].sort((a, b) => b.balance - a.balance), total: r2(sum(by[k], c => c.balance)) })).sort((a, b) => b.total - a.total);
-    const openAll = list.length <= 12;
-    let h = '';
-    const rp = (S.rep && S.rep.people) || [];
-    if (rp.length) {
-      const MONS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], gt = f => r2(sum(rp, p => p[f] || 0));
-      const num = v => money(v).replace(/^GH\S+\s*/, '');
-      const cell = (v, c) => '<span style="text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums" class="' + (c || '') + '">' + num(v) + '</span>';
-      h += '<h2 id="xdebts">Sales persons summary · ' + MONS[(S.rep.month || 1) - 1] + ' <span class="small muted">(GH₵)</span></h2><div class="card" style="padding:6px 14px;overflow-x:auto"><div style="display:grid;grid-template-columns:minmax(80px,1.2fr) repeat(3,minmax(70px,1fr));gap:6px 8px;align-items:baseline;font-size:14px;min-width:300px">' +
-        '<b class="small muted">Name</b><b class="small muted" style="text-align:right">Sales</b><b class="small muted" style="text-align:right">Debt</b><b class="small muted" style="text-align:right">Cash held</b>' +
-        rp.map(p => '<span><b>' + esc(p.name) + '</b></span>' + cell(p.sales) + cell(p.owed, p.owed > 0.004 ? 'red' : '') + cell(p.cashHeld)).join('') +
-        '<b style="border-top:1.5px solid var(--line);padding-top:8px">Total</b><b style="border-top:1.5px solid var(--line);padding-top:8px;text-align:right;white-space:nowrap">' + num(gt('sales')) + '</b><b class="red" style="border-top:1.5px solid var(--line);padding-top:8px;text-align:right;white-space:nowrap">' + num(gt('owed')) + '</b><b style="border-top:1.5px solid var(--line);padding-top:8px;text-align:right;white-space:nowrap">' + num(gt('cashHeld')) + '</b></div></div>';
+/* ---------- sign-in times, close day (cash count) and the owner's day report ---------- */
+var ACT_HEAD = ['Date', 'Time', 'Person', 'Event'];
+var CLOSE_HEAD = ['Date', 'Person', 'Closed at', 'Expected cash', 'Counted cash', 'Difference', 'Note'];
+
+function xsheetOf_(name, head, textCols) {
+  var ss = ss_(), s = ss.getSheetByName(name);
+  if (!s) {
+    s = ss.insertSheet(name);
+    s.getRange(1, 1, 1, head.length).setValues([head]).setFontWeight('bold');
+    s.getRange(1, 1, s.getMaxRows(), textCols).setNumberFormat('@');
+  }
+  return s;
+}
+function xrowsOf_(name, head, textCols) {
+  var s = xsheetOf_(name, head, textCols), last = s.getLastRow();
+  if (last < 2) return [];
+  return s.getRange(2, 1, last - 1, head.length).getValues().filter(function (r) { return String(r[0]).trim() !== ''; });
+}
+function nowDate_() { return Utilities.formatDate(new Date(), tz_(), 'yyyy-MM-dd'); }
+function nowTime_() { return Utilities.formatDate(new Date(), tz_(), 'HH:mm'); }
+function hm_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, tz_(), 'HH:mm');
+  return String(v == null ? '' : v).slice(0, 5);
+}
+
+// records that a person opened or signed in to the app (at most once every 20 minutes)
+function ping_(user) {
+  var s = xsheetOf_('Activity', ACT_HEAD, 3), last = s.getLastRow(), d = nowDate_(), t = nowTime_();
+  if (last >= 2) {
+    var from = Math.max(2, last - 59), rows = s.getRange(from, 1, last - from + 1, 4).getValues();
+    for (var i = rows.length - 1; i >= 0; i--) {
+      if (d_(rows[i][0]) === d && key_(rows[i][2]) === key_(user.name)) {
+        var a = hm_(rows[i][1]).split(':'), b = t.split(':');
+        if ((Number(b[0]) * 60 + Number(b[1])) - (Number(a[0]) * 60 + Number(a[1])) < 20) return { ok: true, skipped: true };
+        break;
+      }
     }
-    h += '<h2>All debts · ' + money(total) + '</h2>';
-    if (!list.length) h += '<div class="card"><div class="small muted">Nobody owes you right now.</div></div>';
-    else h += '<div class="card" style="padding:4px 14px"><div class="small muted" style="padding:8px 0">' + list.length + ' customer(s) owing. Tap a name to collect payment or add an old debt.</div>' + persons.map(p =>
-      '<details' + (openAll ? ' open' : '') + ' style="border-top:1px solid var(--line)"><summary style="display:flex;justify-content:space-between;gap:10px;padding:12px 0;cursor:pointer;list-style:none"><b>' + esc(p.name) + ' <span class="small muted">(' + p.rows.length + ')</span></b><b class="red">' + money(p.total) + '</b></summary>' +
-      p.rows.map(c => '<button class="item" data-act="cust" data-n="' + esc(c.name) + '"><span class="grow"><span class="nm">' + esc(c.name) + '</span>' + (c.last ? '<br><span class="small muted">last bought ' + esc(c.last) + '</span>' : '') + '</span><span class="right"><span class="amt red">' + money(c.balance) + '</span></span></button>').join('') + '</details>').join('') + '</div>';
-    st.insertAdjacentHTML('afterend', h);
   }
-  /* ---------- who owes me (sales person Today tab) ---------- */
-  Object.assign(ERR, { bad_amount: 'Type an amount of 0 or more.' });
-  const _render3 = KL.fn('render');
-  KL.setFn('render', function (k) {
-    _render3(k);
-    if (S.session && S.session.role === 'admin' && S.tab === 'dash') { ownerDay(); ownerDebts(); return; }
-    if (!S.session || S.session.role === 'admin' || S.tab !== 'today') return;
-    const st = document.querySelector('main.wrap .stats'); if (!st || document.getElementById('xowing')) return;
-    const me = kk(S.session.name);
-    const list = derived().customers.filter(c => kk(c.person) === me && (c.balance || 0) > 0.004).sort((a, b) => b.balance - a.balance);
-    const total = r2(sum(list, c => c.balance));
-    st.insertAdjacentHTML('afterend', closeCardHTML() + '<h2 id="xowing">Who owes me' + (list.length ? ' · ' + money(total) : '') + '</h2><div class="card" style="padding:4px 14px">' +
-      (list.length ? list.map(c => '<button class="item" data-act="cust" data-n="' + esc(c.name) + '"><span class="grow"><span class="nm">' + esc(c.name) + '</span></span><span class="right"><span class="amt red">' + money(c.balance) + '</span></span></button>').join('') : '<div class="small muted" style="padding:10px 0">Nobody owes you right now.</div>') + '</div>');
-  });
+  s.getRange(Math.max(last, 1) + 1, 1, 1, 4).setValues([[d, t, user.name, 'Signed in']]);
+  return { ok: true };
+}
 
-  /* ---------- owner: add old debt from before the app ---------- */
-  const _cust = ACT.cust;
-  ACT.cust = d => {
-    _cust(d);
-    if (!S.session || S.session.role !== 'admin') return;
-    const sh = document.querySelector('.sheet'); if (!sh) return;
-    sh.insertAdjacentHTML('beforeend', '<button class="btn block" style="margin-top:10px" data-act="xdebt" data-n="' + esc(d.n) + '">Add old debt (from before the app)</button><button class="btn block" style="margin-top:8px" data-act="xren" data-n="' + esc(d.n) + '">Correct the name</button>');
-  };
-  ACT.xdebt = async d => {
-    if (!navigator.onLine) { toast('Needs internet'); return; }
-    let cur = 0;
-    try { const r = await api('x', { op: 'openget' }); if (r.ok) cur = r.openings[String(d.n).trim().toLowerCase()] || 0; } catch (e) { toast('Needs internet'); return; }
-    sheet('<h2>Old debt: ' + esc(d.n) + '</h2><p class="small muted">Type the total this customer owed you before you started using the app. It is added to what he owes now. Payments reduce it. Saving again replaces the old amount. Type 0 to remove it.</p>' +
-      '<label>Old debt (GH₵)</label><input id="xdamt" type="number" inputmode="decimal" min="0" value="' + (cur || '') + '" placeholder="0" style="width:100%;font:inherit;padding:12px;border:1.5px solid var(--line);border-radius:12px">' +
-      '<label style="margin-top:10px;display:block">Note (optional)</label><input id="xdnote" maxlength="200" placeholder="Example: bread taken in September" style="width:100%;font:inherit;padding:12px;border:1.5px solid var(--line);border-radius:12px">' +
-      '<button class="btn primary block" style="margin-top:12px" data-act="xdebtsave" data-n="' + esc(d.n) + '">Save old debt</button>');
-  };
-  ACT.xdebtsave = async d => {
-    const amount = +$('#xdamt').value || 0, note = $('#xdnote').value || '';
-    try {
-      const r = await api('x', { op: 'openset', customer: d.n, amount, note });
-      if (!r.ok) { toast(errText(r.error)); return; }
-      closeSheet(); toast('Saved'); await refreshCache(); S.rep = null; if (navigator.onLine) fetchReport(true); render(true);
-    } catch (e) { toast('Needs internet'); }
-  };
+function closeRow_(person, date) {
+  var rows = xrowsOf_('Day closes', CLOSE_HEAD, 2), out = null;
+  rows.forEach(function (r) { if (d_(r[0]) === date && key_(r[1]) === key_(person)) out = { at: hm_(r[2]), expected: num_(r[3]), counted: num_(r[4]), diff: num_(r[5]), note: String(r[6] || '') }; });
+  return out;
+}
+function closeDay_(user, req) {
+  if (user.role === 'admin') throw new Error('sales_only');
+  var counted = r2_(num_(req.counted));
+  if (!(counted >= 0) || String(req.counted === undefined ? '' : req.counted).trim() === '') throw new Error('bad_amount');
+  var expected = cashHeld_(rows_('Payments'), rows_('Cash'), user.name), d = nowDate_(), t = nowTime_(), diff = r2_(counted - expected);
+  var s = xsheetOf_('Day closes', CLOSE_HEAD, 2);
+  s.getRange(Math.max(s.getLastRow(), 1) + 1, 1, 1, CLOSE_HEAD.length).setValues([[d, user.name, t, expected, counted, diff, String(req.note || '').slice(0, 200)]]);
+  return { ok: true, closed: { at: t, expected: expected, counted: counted, diff: diff, note: String(req.note || '').slice(0, 200) }, expected: expected };
+}
+function myStatus_(user, req) {
+  return { ok: true, closed: closeRow_(user.name, nowDate_()), expected: cashHeld_(rows_('Payments'), rows_('Cash'), user.name) };
+}
 
-  /* ---------- check before saving: preview + Confirm on every entry ---------- */
-  function confirmBox(title, rows, ok) {
-    const old = document.getElementById('xconf'); if (old) old.remove();
-    const ov = document.createElement('div'); ov.className = 'ov'; ov.id = 'xconf'; ov.style.zIndex = 60;
-    ov.innerHTML = '<div class="sheet" role="dialog"><h2>' + esc(title) + '</h2><p class="small muted" style="margin:0 0 8px">Check the details. Nothing is saved until you confirm.</p><div style="border:1.5px solid var(--line);border-radius:12px;padding:6px 12px">' +
-      rows.map(r => r[0] === 'html' ? r[1] : '<div class="row between" style="padding:6px 0;gap:12px;align-items:baseline"><span class="muted">' + esc(r[0]) + '</span><b class="' + (r[2] || '') + '" style="text-align:right;overflow-wrap:anywhere">' + esc(r[1]) + '</b></div>').join('') +
-      '</div><div class="row" style="margin-top:12px"><button class="btn grow" id="xconf-back">Go back</button><button class="btn primary grow" id="xconf-ok">Confirm and save</button></div></div>';
-    document.body.appendChild(ov);
-    const close = () => { ov.remove(); };
-    ov.addEventListener('click', e => { if (e.target === ov) close(); });
-    document.getElementById('xconf-back').onclick = close;
-    document.getElementById('xconf-ok').onclick = () => { close(); ok(); };
-  }
-  function guard(name, build) {
-    const orig = ACT[name]; if (!orig) return;
-    ACT[name] = function (d, a, e) {
-      let b = null;
-      try { b = build(d); } catch (err) { b = null; }
-      if (!b) return orig.call(this, d, a, e);
-      confirmBox(b.title, b.rows, () => orig.call(null, d, a, e));
-    };
-  }
-  const val = id => { const el = document.getElementById(id); return el ? el.value : ''; };
-  const n2 = v => r2(+v || 0);
-  const custOf = name => derived().customers.find(c => kk(c.name) === kk(name));
+// owner: everything each sales person did on one day
+function dayReport_(req) {
+  var date = String(req.date || '');
+  if (!isDate_(date)) throw new Error('bad_date');
+  var per = {}, order = [];
+  function p_(n) { var k = key_(n); if (!per[k]) { per[k] = { name: String(n).trim(), list: {}, bills: {}, sales: 0, cash: 0, momo: 0, credit: 0, debtIn: 0, handed: 0, upCash: 0, upHand: 0, pays: [], first: '', last: '', seen: [], paidByBill: {}, billTotals: {} }; order.push(k); } return per[k]; }
+  rows_('People').forEach(function (r) { if (key_(r[2]) !== 'admin' && yes_(r[3])) p_(r[0]); });
+  function mark_(x, t) { if (!t) return; if (!x.first || t < x.first) x.first = t; if (!x.last || t > x.last) x.last = t; }
+  rows_('Sales').forEach(function (r) {
+    if (d_(r[1]) !== date) return;
+    var x = p_(r[3]), id = String(r[0]);
+    x.sales = r2_(x.sales + num_(r[8])); x.billTotals[id] = r2_((x.billTotals[id] || 0) + num_(r[8])); x.bills[id] = 1; mark_(x, hm_(r[2]));
+    if (!x.list[id]) x.list[id] = { id: id, time: hm_(r[2]), customer: String(r[4]), items: [], total: 0, paid: 0 };
+    x.list[id].items.push({ p: String(r[5]), q: num_(r[6]), u: num_(r[7]) }); x.list[id].total = r2_(x.list[id].total + num_(r[8]));
+  });
+  rows_('Payments').forEach(function (r) {
+    if (d_(r[1]) <= date) p_(r[3]).upCash += num_(r[6]);
+    if (d_(r[1]) !== date) return;
+    var x = p_(r[3]), c = num_(r[6]), m = num_(r[7]);
+    x.cash = r2_(x.cash + c); x.momo = r2_(x.momo + m);
+    if (key_(r[8]) === 'debt payment') { x.debtIn = r2_(x.debtIn + c + m); x.pays.push({ time: hm_(r[2]), customer: String(r[4]), total: r2_(c + m) }); }
+    else { x.paidByBill[String(r[5])] = r2_((x.paidByBill[String(r[5])] || 0) + c + m); if (x.list[String(r[5])]) x.list[String(r[5])].paid = r2_(x.list[String(r[5])].paid + c + m); }
+    mark_(x, hm_(r[2]));
+  });
+  rows_('Cash').forEach(function (r) { if (r[2] !== 'Handover') return; if (d_(r[1]) <= date) p_(r[3]).upHand += num_(r[4]); if (d_(r[1]) === date) { var x = p_(r[3]); x.handed = r2_(x.handed + num_(r[4])); } });
+  xrowsOf_('Activity', ACT_HEAD, 3).forEach(function (r) { if (d_(r[0]) === date) { var x = p_(r[2]); x.seen.push(hm_(r[1])); } });
+  var people = order.map(function (k) {
+    var x = per[k], credit = 0, n = 0;
+    Object.keys(x.billTotals).forEach(function (id) { credit += Math.max(0, r2_(x.billTotals[id] - (x.paidByBill[id] || 0))); n++; });
+    x.seen.sort();
+    return { name: x.name, bills: n, sales: x.sales, cash: x.cash, momo: x.momo, credit: r2_(credit), debtIn: x.debtIn, handed: x.handed, heldEnd: r2_(x.upCash - x.upHand),
+      bills_: Object.keys(x.list).map(function (id) { return x.list[id]; }).sort(function (a, b) { return a.time < b.time ? -1 : 1; }), pays: x.pays, firstSale: x.first, lastSale: x.last, firstSeen: x.seen[0] || '', lastSeen: x.seen.length ? x.seen[x.seen.length - 1] : '', closed: closeRow_(x.name, date) };
+  });
+  return { ok: true, date: date, people: people };
+}
 
-  /* ---------- paid more than the bill: the extra goes to the old balance ---------- */
-  function saleCalc() {
-    const c = S.cart; if (!c || !c.lines.length || !c.customer) return null;
-    if (c.lines.some(l => !(l.q > 0) || l.u < 0)) return null;
-    const t = r2(sum(c.lines, l => l.q * l.u));
-    let cash = 0, momo = 0;
-    if (c.mode === 'cash') cash = t; else if (c.mode === 'momo') momo = t; else if (c.mode !== 'credit') { cash = n2(c.cash); momo = n2(c.momo); }
-    const bal = r2(t - cash - momo), cu = custOf(c.customer), before = cu && cu.balance > 0 ? cu.balance : 0;
-    const extra = bal < -0.004 ? r2(-bal) : 0, extraCash = Math.min(cash, extra), extraMomo = r2(extra - extraCash);
-    return { c, t, cash, momo, bal, cu, before, extra, extraCash, extraMomo, saleCash: r2(cash - extraCash), saleMomo: r2(momo - extraMomo),
-      okExtra: extra > 0 && kk(c.customer) !== kk(WALKIN) && extra <= before + 0.004 };
-  }
-  const _saveSaleOrig = ACT.savesale;
-  ACT.savesale = async function (d, a, e) {
-    const k = saleCalc();
-    if (!k || !k.okExtra) return _saveSaleOrig.call(this, d, a, e);
-    // save the sale for exactly its total, then record the extra as a payment on the old balance
-    k.c.mode = 'split'; k.c.cash = k.saleCash; k.c.momo = k.saleMomo;
-    const name = k.c.customer;
-    await _saveSaleOrig.call(this, d, a, e);
-    const pay = { type: 'payment', id: uid('P'), ts: Date.now() + 1, date: today(), time: nowTime(), customer: name, cash: k.extraCash, momo: k.extraMomo, person: S.session.name };
-    S.queue.push(pay); await KL.putOne('queue', pay);
-    render(true); KL.syncSoon();
-    toast('Extra ' + money(k.extra) + ' taken off his old balance');
-  };
-  guard('savesale', () => {
-    const k = saleCalc(); if (!k) return null;
-    if (k.bal < -0.004 && !k.okExtra) return null;
-    const rows = [['Customer', k.c.customer]].concat(k.c.lines.map(l => [l.q + ' × ' + l.p, money(l.q * l.u)]));
-    rows.push(['Total', money(k.t)]);
-    if (k.cash) rows.push(['Cash given', money(k.cash)]); if (k.momo) rows.push(['MoMo given', money(k.momo)]);
-    if (k.extra > 0) {
-      rows.push(['Extra paid to old balance', money(k.extra), 'green'], ['He owed before', money(k.before)], ['He will owe after', money(r2(k.before - k.extra)), r2(k.before - k.extra) > 0.004 ? 'red' : 'green']);
-    } else if (k.bal > 0.004) {
-      rows.push(['Owed on this sale', money(k.bal), 'red']);
-      if (k.before > 0.004) rows.push(['He owed before', money(k.before)], ['Total he will owe', money(r2(k.before + k.bal)), 'red']);
-    } else rows.push(['Fully paid', 'Yes', 'green']);
-    return { title: 'Check this sale', rows };
-  });
-  // explain the extra on the sell screen instead of "paid is more than the total"
-  new MutationObserver(() => {
-    const el = document.getElementById('paysum'); if (!el || el.dataset.x === '1') return;
-    if (!/Paid is more than the total/.test(el.textContent)) return;
-    const k = saleCalc(); if (!k || !k.extra) return;
-    el.dataset.x = '1';
-    el.innerHTML = k.okExtra ? '<span class="green"><b>Extra ' + money(k.extra) + ' will reduce what he owes (he owes ' + money(k.before) + ')</b></span>' : '<span class="red"><b>Paid is more than the total' + (kk(k.c.customer) === kk(WALKIN) ? '. Choose a named customer to put the extra on his balance.' : ' and more than he owes.') + '</b></span>';
-    setTimeout(() => { el.dataset.x = '0'; }, 50);
-  }).observe(document.body, { childList: true, subtree: true, characterData: true });
-  guard('savepay', d => {
-    const cash = n2(val('pc')), momo = n2(val('pm')); if (cash + momo <= 0) return null;
-    const cu = custOf(d.n), before = cu ? Math.max(0, cu.balance || 0) : 0, got = r2(cash + momo);
-    const rows = [['Customer', d.n], ['Owes now', money(before), before > 0.004 ? 'red' : '']];
-    if (cash) rows.push(['Cash received', money(cash)]); if (momo) rows.push(['MoMo received', money(momo)]);
-    rows.push(['Total received', money(got)], ['Will owe after', money(Math.max(0, r2(before - got))), r2(before - got) > 0.004 ? 'red' : 'green']);
-    if (got > before + 0.004) rows.push(['html', '<div class="small red" style="padding:6px 0">This is more than he owes. Check the amount.</div>']);
-    return { title: 'Check this payment', rows };
-  });
-  guard('savecash', d => {
-    const amount = n2(val('ca')); if (!(amount > 0)) return null;
-    const rows = [['What', d.k === 'bank' ? 'Money sent to bank' : 'Cash received from ' + d.n], ['Amount', money(amount)], ['Date', val('cd') || today()]];
-    if (val('cn').trim()) rows.push(['Note', val('cn').trim()]);
-    return { title: 'Check this entry', rows };
-  });
-  guard('savecust', () => {
-    const name = val('nn').trim().replace(/\s+/g, ' '); if (!name || kk(name) === kk(WALKIN)) return null;
-    const rows = [['Name', name]]; if (val('np').trim()) rows.push(['Phone', val('np').trim()]); if (val('nl').trim()) rows.push(['Location', val('nl').trim()]);
-    return { title: 'Check this customer', rows };
-  });
-  guard('xstocksave', d => {
-    const prods = X.stockProds || [], items = prods.map((p, i) => ({ p, out: +val('xso' + i) || 0, back: +val('xsb' + i) || 0 })).filter(i => i.out > 0 || i.back > 0);
-    if (!items.length || items.some(i => i.back > i.out)) return null;
-    return { title: 'Check the bread record', rows: [['Sales person', X.person], ['Day', d.d]].concat(items.map(i => [i.p, 'out ' + i.out + ' · back ' + i.back])) };
-  });
-  guard('xdebtsave', d => {
-    const amount = n2(val('xdamt')); const cu = custOf(d.n);
-    const rows = [['Customer', d.n], ['Old debt will be', money(amount), amount > 0 ? 'red' : '']];
-    if (val('xdnote').trim()) rows.push(['Note', val('xdnote').trim()]);
-    if (cu) rows.push(['He owes now', money(Math.max(0, cu.balance || 0))]);
-    return { title: 'Check this old debt', rows };
-  });
-  guard('xnotesave', () => {
-    const t = val('xnt').trim(); if (!t) return null;
-    return { title: 'Check your note', rows: [['html', '<div style="padding:8px 0;overflow-wrap:anywhere">' + esc(t) + '</div>']] };
-  });
 
-  /* ---------- sign-in time ---------- */
-  function ping() {
-    if (!S.session || !navigator.onLine) return;
-    try { const last = +sessionStorage.getItem('kl_ping') || 0; if (Date.now() - last < 15 * 60000) return; sessionStorage.setItem('kl_ping', String(Date.now())); } catch (e) { /* ignore */ }
-    api('x', { op: 'ping' }).catch(() => { });
-  }
-  const _login = ACT.login;
-  if (_login) ACT.login = async function (d, a, e) { const r = await _login.call(this, d, a, e); setTimeout(ping, 1500); return r; };
-  setTimeout(ping, 2500);
-
-  /* ---------- sales person: close the day (count the cash) ---------- */
-  Object.assign(ERR, { sales_only: 'Only sales persons close the day.' });
-  const CD = { data: null, loading: false, tried: false };
-  function loadClose() {
-    if (CD.loading || !navigator.onLine) return; CD.loading = true;
-    api('x', { op: 'mystatus' }).then(r => { CD.loading = false; CD.tried = true; if (r.ok) CD.data = r; if (S.tab === 'today') render(true); }).catch(() => { CD.loading = false; CD.tried = true; });
-  }
-  const diffText = d => d < -0.004 ? '<b class="red">short by ' + money(-d) + '</b>' : d > 0.004 ? '<b>extra ' + money(d) + '</b>' : '<b class="green">exact</b>';
-  function closeCardHTML() {
-    if (!CD.data && !CD.tried) loadClose();
-    const c = CD.data && CD.data.closed;
-    if (c) return '<div class="card" style="margin-top:10px"><b>Day closed at ' + esc(c.at) + '</b><div class="small" style="margin-top:4px">Counted ' + money(c.counted) + ' · should have ' + money(c.expected) + ' · ' + diffText(c.diff) + '</div><button class="btn sm" style="margin-top:8px" data-act="xclose">Count again</button></div>';
-    return '<button class="btn violet block" style="margin-top:10px" data-act="xclose">Close day · count my cash</button>';
-  }
-  ACT.xclose = async () => {
-    if (!navigator.onLine) { toast('Needs internet'); return; }
-    if (S.queue.length) { toast('Send your sales first: open the menu and tap Sync'); return; }
-    let exp = 0;
-    try { const r = await api('x', { op: 'mystatus' }); if (r.ok) { CD.data = r; exp = r.expected; } } catch (e) { toast('Needs internet'); return; }
-    sheet('<h2>Close day</h2><p class="small muted">Count all the cash in your hand. Type the amount. The app compares it with what your sales say you should have.</p>' +
-      '<div class="stats"><div class="stat violet wide"><span>You should have</span><b>' + money(exp) + '</b></div></div>' +
-      '<label>Cash I counted (GH₵)</label><input id="xcc" type="number" inputmode="decimal" min="0" placeholder="0" style="width:100%;font:inherit;padding:12px;border:1.5px solid var(--line);border-radius:12px">' +
-      '<label style="margin-top:10px;display:block">Note (optional)</label><input id="xcn" maxlength="200" placeholder="Example: bread given to a customer" style="width:100%;font:inherit;padding:12px;border:1.5px solid var(--line);border-radius:12px">' +
-      '<button class="btn primary block" style="margin-top:12px" data-act="xclosesave" data-e="' + exp + '">Close day</button>');
-  };
-  ACT.xclosesave = async d => {
-    const counted = $('#xcc').value, note = $('#xcn').value || '';
-    try {
-      const r = await api('x', { op: 'closeday', counted, note });
-      if (!r.ok) { toast(errText(r.error)); return; }
-      CD.data = { ok: true, closed: r.closed, expected: r.expected }; KL.closeSheet(); toast('Day closed at ' + r.closed.at); render(true);
-    } catch (e) { toast('Needs internet'); }
-  };
-  guard('xclosesave', d => {
-    const v = val('xcc'); if (v === '' || !(+v >= 0)) return null;
-    const exp = +d.e || 0, diff = r2(+v - exp);
-    return { title: 'Check your cash count', rows: [['You should have', money(exp)], ['You counted', money(+v)], ['Difference', diff < -0.004 ? 'short by ' + money(-diff) : diff > 0.004 ? 'extra ' + money(diff) : 'exact', diff < -0.004 ? 'red' : diff > 0.004 ? '' : 'green'], ['html', '<div class="small muted" style="padding:6px 0">The owner will see the time and the difference.</div>']] };
-  });
-
-  /* ---------- owner: day report on the Dashboard ---------- */
-  const DY = { date: null, data: null, loading: false };
-  function loadDay() {
-    if (!navigator.onLine) return; DY.loading = true; const want = DY.date;
-    api('x', { op: 'dayreport', date: want }).then(r => { DY.loading = false; if (r.ok && DY.date === want) DY.data = r; if (S.tab === 'dash') render(true); }).catch(() => { DY.loading = false; });
-  }
-  function ownerDay() {
-    const pk = document.querySelector('main.wrap .picker'); if (!pk || document.getElementById('xdaycard')) return;
-    if (!DY.date) DY.date = today();
-    if (!DY.data || DY.data.date !== DY.date) { if (!DY.loading) loadDay(); }
-    const d = DY.data && DY.data.date === DY.date ? DY.data : null;
-    let h = '<div class="card" id="xdaycard" style="margin-top:10px"><div class="row between" style="gap:10px;align-items:center"><h3 style="margin:0">Pick a day</h3><input id="xdd" type="date" value="' + esc(DY.date) + '" max="' + esc(today()) + '" style="font:inherit;padding:8px;border:1.5px solid var(--line);border-radius:10px"></div>';
-    if (!d) h += '<p class="small muted">Loading…</p>';
-    else {
-      const t = f => r2(sum(d.people, p => p[f] || 0));
-      h += '<div class="small muted" style="margin:6px 0">Total sales <b>' + money(t('sales')) + '</b> · cash ' + money(t('cash')) + ' · MoMo ' + money(t('momo')) + ' · credit ' + money(t('credit')) + ' · debts paid ' + money(t('debtIn')) + '</div>';
-      h += daySummary(d);
-      h += d.people.map(p => {
-        const seen = p.firstSeen ? 'Signed in ' + esc(p.firstSeen) + (p.lastSeen && p.lastSeen !== p.firstSeen ? ' · last seen ' + esc(p.lastSeen) : '') : 'Not seen';
-        const sales = p.firstSale ? 'Sales ' + esc(p.firstSale) + ' to ' + esc(p.lastSale) : 'No sales';
-        const cl = p.closed ? 'Closed ' + esc(p.closed.at) + ' · counted ' + money(p.closed.counted) + ' of ' + money(p.closed.expected) + ' · ' + diffText(p.closed.diff) : '<span class="muted">Day not closed</span>';
-        const det = (p.bills_ && p.bills_.length || p.pays && p.pays.length) ? '<details style="margin-top:4px"><summary class="small" style="cursor:pointer;color:var(--violet);font-weight:600">See each bill (' + p.bills_.length + ')</summary>' +
-          p.bills_.map(b => { const o = r2(b.total - b.paid); return '<button class="item" data-act="xdbill" data-p="' + esc(p.name) + '" data-id="' + esc(b.id) + '"><span class="grow"><span class="nm">' + esc(b.customer) + '</span><br><span class="small muted">' + esc(b.time) + ' · ' + esc(b.items.map(i => i.q + ' ' + i.p).join(', ')) + '</span></span><span class="right"><span class="amt">' + money(b.total) + '</span>' + (o > 0.004 ? '<br><span class="small red">owes ' + money(o) + '</span>' : '') + '</span></button>'; }).join('') +
-          (p.pays || []).map(y => '<div class="item"><span class="grow"><span class="nm">' + esc(y.customer) + '</span><br><span class="small muted">' + esc(y.time) + ' · debt payment</span></span><span class="right"><span class="amt">' + money(y.total) + '</span></span></div>').join('') + '</details>' : '';
-        return '<div style="border-top:1px solid var(--line);padding:8px 0"><div class="row between"><b>' + esc(p.name) + '</b><b>' + money(p.sales) + '</b></div><div class="small muted">' + p.bills + ' bill(s) · cash ' + money(p.cash) + ' · MoMo ' + money(p.momo) + ' · credit ' + money(p.credit) + (p.debtIn ? ' · debts paid ' + money(p.debtIn) : '') + (p.handed ? ' · handed over ' + money(p.handed) : '') + '</div><div class="small">' + seen + ' · ' + sales + '</div><div class="small">' + cl + '</div>' + det + '</div>';
-      }).join('');
-    }
-    pk.insertAdjacentHTML('afterend', h + '</div>');
-  }
-  ACT.xdbill = d => {
-    const pp = DY.data && DY.data.people.find(x => x.name === d.p), b = pp && pp.bills_.find(x => x.id === d.id); if (!b) return;
-    const sh = KL.sheet('<h2>Sale</h2>' + KL.x.billReceiptHTML({ customer: b.customer, date: DY.date, time: b.time, person: d.p, items: b.items, total: b.total, cash: b.paid, momo: 0 }) + KL.x.infoHTML(b.id));
-  };
-  document.addEventListener('change', e => { if (e.target && e.target.id === 'xdd' && e.target.value) { DY.date = e.target.value; DY.data = null; render(true); } });
-
-  /* ---------- owner: correct a customer's name ---------- */
-  Object.assign(ERR, { bad_name: 'Choose a real name.', missing_name: 'Type the new name.' });
-  ACT.xren = d => {
-    sheet('<h2>Correct the name</h2><p class="small muted">The new name replaces the old one on <b>every</b> sale and payment, and on the sales person\'s phone. The sales and money do not change. If the new name already exists, the two customers are joined into one.</p>' +
-      '<label>Name now</label><input value="' + esc(d.n) + '" disabled style="width:100%;font:inherit;padding:12px;border:1.5px solid var(--line);border-radius:12px;background:var(--lav)">' +
-      '<label style="margin-top:10px;display:block">Correct name</label><input id="xrn" value="' + esc(d.n) + '" autocomplete="off" style="width:100%;font:inherit;padding:12px;border:1.5px solid var(--line);border-radius:12px">' +
-      '<button class="btn primary block" style="margin-top:12px" data-act="xrensave" data-n="' + esc(d.n) + '">Change the name</button>');
-  };
-  ACT.xrensave = async d => {
-    const to = val('xrn').trim().replace(/\s+/g, ' ');
-    if (!to) { toast('Type the new name'); return; }
-    if (to === d.n) { toast('The name is the same'); return; }
-    if (!navigator.onLine) { toast('Needs internet'); return; }
-    try {
-      const r = await api('x', { op: 'custrename', from: d.n, to });
-      if (!r.ok) { toast(errText(r.error)); return; }
-      KL.closeSheet(); toast(r.merged ? 'Joined with ' + r.name : 'Name changed'); S.rep = null; S.hist = null; DY.data = null;
-      await refreshCache(); if (navigator.onLine) fetchReport(true); render(true);
-    } catch (e) { toast('Needs internet'); }
-  };
-  guard('xrensave', d => {
-    const to = val('xrn').trim().replace(/\s+/g, ' '); if (!to || to === d.n) return null;
-    const ex = derived().customers.some(c => kk(c.name) === kk(to) && kk(c.name) !== kk(d.n));
-    return { title: 'Check the new name', rows: [['Old name', d.n], ['New name', to, 'green'], ['html', '<div class="small ' + (ex ? 'red' : 'muted') + '" style="padding:6px 0">' + (ex ? 'A customer with this name already exists. Their sales, payments and debts will be joined into one.' : 'All past sales and payments will show the new name.') + '</div>']] };
-  });
-
-  /* ---------- owner: cash ledger (why is cash held what it is?) ---------- */
-  const _render4 = KL.fn('render');
-  KL.setFn('render', function (k) {
-    _render4(k);
-    if (!S.session || S.session.role !== 'admin' || S.tab !== 'team' || !X.person || document.getElementById('xledger')) return;
-    const st = document.querySelector('main.wrap .stats'); if (!st) return;
-    st.insertAdjacentHTML('afterend', '<button id="xledger" class="btn block" style="margin-top:8px" data-act="xledger" data-p="' + esc(X.person) + '">See how cash held is worked out</button>');
-  });
-  ACT.xledger = async d => {
-    if (!navigator.onLine) { toast('Needs internet'); return; }
-    let r; try { r = await api('x', { op: 'recon', person: d.p }); } catch (e) { toast('Needs internet'); return; }
-    if (!r.ok) { toast(errText(r.error)); return; }
-    sheet('<h2>Cash ' + esc(d.p) + ' holds</h2><p class="small muted">Cash he received (sales and debt payments) minus what he handed to you. MoMo is not cash, so it is not here. ' + (r.held < -0.004 ? '<b class="red">It is negative: he handed over more than he received. Look at the red lines.</b>' : '') + '</p>' +
-      '<div class="stats"><div class="stat violet wide"><span>Cash held now</span><b>' + money(r.held) + '</b></div></div><div style="max-height:50vh;overflow:auto;margin-top:8px">' +
-      (r.rows.length ? r.rows.slice().reverse().map(x => '<div class="item" style="gap:8px"><span class="grow"><span class="nm small">' + esc(x.what) + '</span><br><span class="small muted">' + esc(x.d + ' ' + x.t) + '</span></span><span class="right"><span class="amt ' + (x.amt < 0 ? 'red' : '') + '">' + (x.amt < 0 ? '−' : '+') + money(Math.abs(x.amt)) + '</span><br><span class="small muted">held ' + money(x.run) + '</span></span></div>').join('') : '<div class="empty">No cash yet.</div>') + '</div>');
-  };
-
-  /* ---------- stop wrong amounts ---------- */
-  const _scash = ACT.savecash;
-  ACT.savecash = function (d, a, e) {
-    if (d.k === 'handover') {
-      const amount = n2(val('ca')), row = ((S.rep && S.rep.people) || []).find(p => kk(p.name) === kk(d.n));
-      if (row && amount > (row.cashHeld || 0) + 0.004) { toast(d.n + ' only holds ' + money(Math.max(0, row.cashHeld || 0)) + '. Check the amount or the person.'); return; }
-    }
-    return _scash.call(this, d, a, e);
-  };
-  const _spay = ACT.savepay;
-  ACT.savepay = function (d, a, e) {
-    const got = r2(n2(val('pc')) + n2(val('pm'))), cu = custOf(d.n), owes = cu ? Math.max(0, cu.balance || 0) : 0;
-    if (got > owes + 0.004) { toast('He only owes ' + money(owes) + '. Type no more than that.'); return; }
-    return _spay.call(this, d, a, e);
-  };
-
-  /* ---------- owner: simple day summary ---------- */
-  function daySummary(d) {
-    const rows = d.people.filter(p => p.sales || p.cash || p.momo || p.handed || p.bills);
-    if (!rows.length) return '';
-    const tc = r2(sum(rows, p => p.cash)), tm = r2(sum(rows, p => p.momo)), th = r2(sum(rows, p => p.handed || 0)), ts = r2(sum(rows, p => p.heldEnd || 0));
-    const td = 'padding:5px 4px;text-align:right', th_ = 'padding:5px 4px;text-align:right;font-weight:600;color:var(--muted,#666)';
-    let h = '<div style="overflow-x:auto;margin:8px 0"><table style="border-collapse:collapse;width:100%;font-size:13px"><tr><td style="' + th_ + ';text-align:left">Who</td><td style="' + th_ + '">Cash</td><td style="' + th_ + '">MoMo</td><td style="' + th_ + '">Total</td><td style="' + th_ + '">Handed to you</td><td style="' + th_ + '">Still with him</td></tr>';
-    rows.forEach(p => { h += '<tr style="border-top:1px solid var(--line)"><td style="padding:5px 4px"><b>' + esc(p.name) + '</b></td><td style="' + td + '">' + money(p.cash) + '</td><td style="' + td + '">' + money(p.momo) + '</td><td style="' + td + '"><b>' + money(r2(p.cash + p.momo)) + '</b></td><td style="' + td + '">' + money(p.handed || 0) + '</td><td style="' + td + ';' + ((p.heldEnd || 0) < -0.004 ? 'color:#c0392b' : '') + '">' + money(p.heldEnd || 0) + '</td></tr>'; });
-    h += '<tr style="border-top:2px solid var(--wine,#7A1F3D)"><td style="padding:6px 4px"><b>All</b></td><td style="' + td + '"><b>' + money(tc) + '</b></td><td style="' + td + '"><b>' + money(tm) + '</b></td><td style="' + td + '"><b>' + money(r2(tc + tm)) + '</b></td><td style="' + td + '"><b>' + money(th) + '</b></td><td style="' + td + '"><b>' + money(ts) + '</b></td></tr></table></div><div class="small muted">Cash and MoMo are money received that day (sales and debt payments). "Still with him" is the cash he holds at the end of that day.</div>';
-    return h;
-  }
-
-  /* ---------- owner: edit a debt payment or a handover ---------- */
-  Object.assign(ERR, { reason_needed: 'Please write the reason.', more_than_owed: 'That would be more than the customer owes.', more_than_held: 'That would leave the sales person with negative cash.', bad_date: 'Choose a real date.', nothing_to_clear: 'There is nothing to clear for that date.', restore_latest_first: 'Restore the newest clearing first.', already_restored: 'That one was already restored.' });
-  const inp = 'width:100%;font:inherit;padding:12px;border:1.5px solid var(--line);border-radius:12px';
-  ACT.xeditrec = d => {
-    const x = S.recs && S.recs.rows.find(y => y.kind === d.k && y.id === d.id); if (!x) return;
-    if (x.kind === 'pay') {
-      sheet('<h2>Change this debt payment</h2><p class="small muted">' + esc(x.customer) + ' paid ' + esc(x.person) + ' on ' + esc(x.date) + '. The change is written in the Edit log.</p>' +
-        '<label>Cash</label><input id="ecash" type="number" inputmode="decimal" step="0.01" value="' + (x.cash || 0) + '" style="' + inp + '"><label style="margin-top:8px;display:block">MoMo</label><input id="emomo" type="number" inputmode="decimal" step="0.01" value="' + (x.momo || 0) + '" style="' + inp + '">' +
-        '<label style="margin-top:8px;display:block">Reason</label><input id="ereason" placeholder="Example: typed 250 instead of 25" style="' + inp + '"><button class="btn primary block" style="margin-top:12px" data-act="xeditsave" data-k="pay" data-id="' + esc(x.id) + '">Save change</button>');
+/* ---------- owner: correct a customer's name everywhere (or merge two names) ---------- */
+var REN_HEAD = ['Old name', 'New name', 'Changed by', 'Changed at'];
+var REN_ = null;
+function renMap_() {
+  if (REN_) return REN_;
+  var m = {};
+  xrowsOf_('Renames', REN_HEAD, 2).forEach(function (r) { m[key_(r[0])] = String(r[1]).trim(); });
+  REN_ = m; return m;
+}
+// the current spelling of a name (sales still waiting on a phone may use an old spelling)
+function canon_(name) {
+  var m = renMap_(), n = String(name || '').trim(), hops = 0;
+  while (m[key_(n)] && key_(m[key_(n)]) !== key_(n) && hops < 6) { n = m[key_(n)]; hops++; }
+  return n;
+}
+function xRenameCol_(sheetName, width, col, from, to) {
+  var sh = sh_(sheetName), last = sh.getLastRow(), n = 0;
+  if (last < 2) return 0;
+  var rg = sh.getRange(2, col + 1, last - 1, 1), v = rg.getValues();
+  v.forEach(function (r, i) { if (key_(r[0]) === key_(from)) { v[i][0] = to; n++; } });
+  if (n) rg.setValues(v);
+  return n;
+}
+function custRename_(user, req) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(28000);
+  try {
+    var from = String(req.from || '').trim(), to = String(req.to || '').trim().replace(/\s+/g, ' ');
+    if (!to || to.length > 80) throw new Error('missing_name');
+    if (key_(from) === key_(WALKIN) || key_(to) === key_(WALKIN)) throw new Error('bad_name');
+    var cs = sh_('Customers'), clast = cs.getLastRow(), crows = clast < 2 ? [] : cs.getRange(2, 1, clast - 1, SHEETS['Customers'].length).getValues();
+    var fi = -1, ti = -1;
+    crows.forEach(function (r, i) { if (key_(r[0]) === key_(from)) fi = i; if (key_(r[0]) === key_(to) && key_(r[0]) !== key_(from)) ti = i; });
+    if (fi < 0) throw new Error('unknown_customer');
+    if (key_(from) === key_(to) && from === to) return { ok: true, same: true };
+    var merged = ti >= 0, target = merged ? String(crows[ti][0]).trim() : to;
+    var oldOpen = openingFor_(from), tgtOpen = openingFor_(target);
+    var sN = xRenameCol_('Sales', 9, 4, from, target), pN = xRenameCol_('Payments', 9, 4, from, target);
+    if (merged) {
+      cs.deleteRow(fi + 2);
+      if (oldOpen > 0) { var os = openSheet_(); os.getRange(Math.max(os.getLastRow(), 1) + 1, 1, 1, OPEN_HEAD.length).setValues([[target, r2_(oldOpen + tgtOpen), Utilities.formatDate(new Date(), tz_(), 'yyyy-MM-dd HH:mm'), user.name, 'merged from ' + from]]); }
     } else {
-      sheet('<h2>Change this handover</h2><p class="small muted">' + esc(x.person) + ' handed over cash. The change is written in the Edit log.</p>' +
-        '<label>Amount</label><input id="eamt" type="number" inputmode="decimal" step="0.01" value="' + x.total + '" style="' + inp + '"><label style="margin-top:8px;display:block">Date</label><input id="edate" type="date" value="' + esc(x.date) + '" max="' + esc(today()) + '" style="' + inp + '">' +
-        '<label style="margin-top:8px;display:block">Reason</label><input id="ereason" placeholder="Example: he gave 200 not 300" style="' + inp + '"><button class="btn primary block" style="margin-top:12px" data-act="xeditsave" data-k="cash" data-id="' + esc(x.id) + '">Save change</button>');
+      cs.getRange(fi + 2, 1, 1, 1).setValues([[target]]);
+      if (oldOpen > 0) { var os2 = openSheet_(); os2.getRange(Math.max(os2.getLastRow(), 1) + 1, 1, 1, OPEN_HEAD.length).setValues([[target, oldOpen, Utilities.formatDate(new Date(), tz_(), 'yyyy-MM-dd HH:mm'), user.name, 'name changed from ' + from]]); }
     }
-  };
-  ACT.xeditsave = async d => {
-    const reason = val('ereason').trim(); if (reason.length < 3) { toast('Write the reason'); return; }
-    if (!navigator.onLine) { toast('Needs internet'); return; }
-    const req = d.k === 'pay' ? { op: 'editpay', id: d.id, cash: n2(val('ecash')), momo: n2(val('emomo')), reason } : { op: 'edithand', id: d.id, amount: n2(val('eamt')), date: val('edate'), reason };
-    try { const r = await api('x', req); if (!r.ok) { toast(errText(r.error)); return; } } catch (e) { toast('Needs internet'); return; }
-    closeSheet(); toast('Changed'); S.rep = null; DY.data = null;
-    await loadRecords(); await refreshCache(); await fetchReport(true);
-  };
+    OPEN_ = null;
+    var rs = xsheetOf_('Renames', REN_HEAD, 2), stamp = Utilities.formatDate(new Date(), tz_(), 'yyyy-MM-dd HH:mm');
+    rs.getRange(Math.max(rs.getLastRow(), 1) + 1, 1, 1, 4).setValues([[from, target, user.name, stamp]]);
+    REN_ = null;
+    xappend_('Edit log', [stamp, user.name, 'RENAME', '', target, merged ? 'Names merged' : 'Name corrected', from, target + ' (' + sN + ' sale lines, ' + pN + ' payments)']);
+    return { ok: true, merged: merged, name: target, sales: sN, payments: pN };
+  } finally {
+    lock.releaseLock();
+  }
+}
 
-  /* ---------- owner: start from a day / delete one day / restore ---------- */
-  ACT.xclear = d => {
-    const before = d.m === 'before';
-    sheet('<h2 class="red">' + (before ? 'Start from a day' : 'Delete one day') + '</h2><p class="small muted">' + (before
-      ? 'Everything <b>before</b> the day you pick is removed from the live sheets. Each customer\'s balance and the cash each sales person holds are carried forward, so the figures still tally. A safety copy is kept and you can restore it. A daily summary is kept for ever.'
-      : 'Removes <b>only</b> the sales, payments and handovers of the day you pick. Nothing is carried forward. A safety copy is kept and you can restore it.') + '</p>' +
-      '<label>' + (before ? 'Start from this day' : 'Day to delete') + '</label><input id="cld" type="date" max="' + esc(today()) + '" value="' + esc(today()) + '" style="' + inp + '">' +
-      '<button class="btn primary block" style="margin-top:12px" data-act="xclearprev" data-m="' + d.m + '">Show me what will happen</button>');
-  };
-  ACT.xclearprev = async d => {
-    const date = val('cld'); if (!date) { toast('Pick a day'); return; }
-    if (!navigator.onLine) { toast('Needs internet'); return; }
-    let r; try { r = await api('x', { op: 'clearpreview', mode: d.m, date }); } catch (e) { toast('Needs internet'); return; }
-    if (!r.ok) { toast(errText(r.error)); return; }
-    const before = d.m === 'before';
-    let h = '<h2 class="red">' + (before ? 'Start from ' : 'Delete ') + esc(date) + '</h2><div class="card"><b>' + r.bills + ' bill(s)</b>, ' + r.payments + ' payment(s) and ' + r.handovers + ' handover(s) will be removed from the live sheets.</div>';
-    if (before) {
-      h += '<div class="card"><b>Carried forward</b><div class="small muted">Customers who owe: ' + r.carryDebtCount + ' · total ' + money(r.carryDebtTotal) + '</div>' +
-        r.carryDebts.map(c => '<div class="row between small"><span>' + esc(c.name) + '</span><span class="' + (c.amount < 0 ? 'green' : '') + '">' + money(c.amount) + '</span></div>').join('') +
-        (r.carryDebtCount > r.carryDebts.length ? '<div class="small muted">and more…</div>' : '') +
-        '<div class="small muted" style="margin-top:6px">Cash held by each sales person stays the same:</div>' + r.carryCash.map(c => '<div class="row between small"><span>' + esc(c.name) + '</span><span>' + money(c.amount) + '</span></div>').join('') + '</div>';
+/* ---------- owner: cash ledger for one sales person (shows how "cash held" is worked out) ---------- */
+function recon_(req) {
+  var person = String(req.person || '').trim(), me = key_(person), list = [];
+  rows_('Payments').forEach(function (r) {
+    if (key_(r[3]) !== me || num_(r[6]) <= 0) return;
+    list.push({ d: d_(r[1]), t: hm_(r[2]), what: (key_(r[8]) === 'debt payment' ? 'Debt payment · ' : 'Sale · ') + String(r[4]), amt: num_(r[6]) });
+  });
+  rows_('Cash').forEach(function (r) {
+    if (r[2] !== 'Handover' || key_(r[3]) !== me) return;
+    list.push({ d: d_(r[1]), t: '99:99', what: 'Handed to owner' + (String(r[5] || '') ? ' · ' + String(r[5]) : ''), amt: -num_(r[4]), handover: true });
+  });
+  list.sort(function (a, b) { return a.d + a.t < b.d + b.t ? -1 : 1; });
+  var run = 0;
+  list.forEach(function (x) { run = r2_(run + x.amt); x.run = run; if (x.t === '99:99') x.t = ''; });
+  return { ok: true, person: person, held: run, rows: list.slice(-200) };
+}
+
+
+/* ================= clear records, restore, daily summary, checks, edits ================= */
+var BATCH_HEAD = ['Batch', 'Cleared at', 'Cleared by', 'Mode', 'Date', 'Sales lines', 'Payments', 'Handovers', 'Status'];
+var ARCH_HEAD = ['Batch', 'Table', 'v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9'];
+var DSUM_HEAD = ['Date', 'Person', 'Bills', 'Sales', 'Cash', 'MoMo', 'Credit', 'Debts paid', 'Batch'];
+
+function xVal_(v) { return v instanceof Date ? Utilities.formatDate(v, tz_(), 'yyyy-MM-dd') : v; }
+
+// work out what a clear would remove and carry forward (nothing is changed here)
+function clearPlan_(mode, date) {
+  var rm = { Sales: [], Payments: [], Cash: [] }, keep = { Sales: [], Payments: [], Cash: [] };
+  function test_(d) { return mode === 'day' ? d === date : d < date; }
+  rows_('Sales').forEach(function (r) { (test_(d_(r[1])) ? rm.Sales : keep.Sales).push(r); });
+  rows_('Payments').forEach(function (r) { (test_(d_(r[1])) ? rm.Payments : keep.Payments).push(r); });
+  rows_('Cash').forEach(function (r) { (r[2] === 'Handover' && test_(d_(r[1])) ? rm.Cash : keep.Cash).push(r); });
+  var plan = { rm: rm, keep: keep, carryCust: {}, carryNames: {}, carryCash: {}, collected: 0 };
+  if (mode === 'before') {
+    rm.Sales.forEach(function (r) { var k = key_(r[4]); if (k === key_(WALKIN)) return; plan.carryCust[k] = r2_((plan.carryCust[k] || 0) + num_(r[8])); plan.carryNames[k] = plan.carryNames[k] || String(r[4]).trim(); });
+    rm.Payments.forEach(function (r) {
+      var k = key_(r[4]), amt = num_(r[6]) + num_(r[7]);
+      if (k !== key_(WALKIN)) { plan.carryCust[k] = r2_((plan.carryCust[k] || 0) - amt); plan.carryNames[k] = plan.carryNames[k] || String(r[4]).trim(); }
+      var pk = key_(r[3]); plan.carryCash[pk] = r2_((plan.carryCash[pk] || 0) + num_(r[6])); plan.collected = r2_(plan.collected + num_(r[6]));
+      plan.carryNames['p:' + pk] = plan.carryNames['p:' + pk] || String(r[3]).trim();
+    });
+    rm.Cash.forEach(function (r) { var pk = key_(r[3]); plan.carryCash[pk] = r2_((plan.carryCash[pk] || 0) - num_(r[4])); plan.carryNames['p:' + pk] = plan.carryNames['p:' + pk] || String(r[3]).trim(); });
+  }
+  return plan;
+}
+function clearArgs_(req) {
+  var mode = req.mode === 'day' ? 'day' : 'before', date = String(req.date || ''), today = xToday_(req);
+  if (!isDate_(date) || date > today) throw new Error('bad_date');
+  return { mode: mode, date: date };
+}
+function clearPreview_(req) {
+  var a = clearArgs_(req), plan = clearPlan_(a.mode, a.date), bills = {};
+  plan.rm.Sales.forEach(function (r) { bills[String(r[0])] = 1; });
+  var cust = [], tot = 0;
+  Object.keys(plan.carryCust).forEach(function (k) { var v = plan.carryCust[k]; if (Math.abs(v) > 0.004) { cust.push({ name: plan.carryNames[k], amount: v }); if (v > 0) tot = r2_(tot + v); } });
+  cust.sort(function (x, y) { return y.amount - x.amount; });
+  var cash = Object.keys(plan.carryCash).filter(function (k) { return Math.abs(plan.carryCash[k]) > 0.004; }).map(function (k) { return { name: plan.carryNames['p:' + k], amount: plan.carryCash[k] }; });
+  return { ok: true, mode: a.mode, date: a.date, bills: Object.keys(bills).length, salesLines: plan.rm.Sales.length, payments: plan.rm.Payments.length, handovers: plan.rm.Cash.length, carryDebts: cust.slice(0, 15), carryDebtCount: cust.length, carryDebtTotal: tot, carryCash: cash };
+}
+function archSheet_() { return xsheetOf_('Archive', ARCH_HEAD, 2); }
+function appendRows_(sheet, rows) {
+  if (!rows.length) return;
+  sheet.getRange(Math.max(sheet.getLastRow(), 1) + 1, 1, rows.length, rows[0].length).setValues(rows);
+}
+function rewrite_(name, keepRows) {
+  var sh = sh_(name), last = sh.getLastRow(), w = SHEETS[name].length;
+  if (last > 1) sh.getRange(2, 1, last - 1, w).clearContent();
+  if (keepRows.length) sh.getRange(2, 1, keepRows.length, w).setValues(keepRows.map(function (r) { return r.map(xVal_); }));
+}
+function clearRun_(user, req) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(28000);
+  try {
+    if (String(req.ownerKey || '').trim() === '' || String(req.ownerKey).trim() !== String(req.key || '').trim()) { Utilities.sleep(800); throw new Error('wrong_key'); }
+    if (String(req.confirm || '').trim().toUpperCase() !== 'CLEAR') throw new Error('not_confirmed');
+    var a = clearArgs_(req), plan = clearPlan_(a.mode, a.date);
+    if (!plan.rm.Sales.length && !plan.rm.Payments.length && !plan.rm.Cash.length) throw new Error('nothing_to_clear');
+    var now = new Date(), batch = 'A' + Utilities.formatDate(now, tz_(), 'yyyyMMddHHmmss'), stamp = Utilities.formatDate(now, tz_(), 'yyyy-MM-dd HH:mm');
+    // 1. safety copy of everything that is removed
+    var arch = [];
+    ['Sales', 'Payments', 'Cash'].forEach(function (n) { plan.rm[n].forEach(function (r) { arch.push([batch, n].concat(r.map(xVal_))); }); });
+    // 2. daily summary kept for ever (only when clearing a whole period)
+    var carryRows = [];
+    if (a.mode === 'before') {
+      var per = {};
+      function g_(d, p) { var k = d + '|' + key_(p); return per[k] || (per[k] = { d: d, p: String(p).trim(), bills: {}, bt: {}, bp: {}, sales: 0, cash: 0, momo: 0, debt: 0 }); }
+      plan.rm.Sales.forEach(function (r) { var x = g_(d_(r[1]), r[3]), id = String(r[0]); x.bills[id] = 1; x.bt[id] = r2_((x.bt[id] || 0) + num_(r[8])); x.sales = r2_(x.sales + num_(r[8])); });
+      plan.rm.Payments.forEach(function (r) {
+        var x = g_(d_(r[1]), r[3]), c = num_(r[6]), m = num_(r[7]); x.cash = r2_(x.cash + c); x.momo = r2_(x.momo + m);
+        if (key_(r[8]) === 'debt payment') x.debt = r2_(x.debt + c + m); else x.bp[String(r[5])] = r2_((x.bp[String(r[5])] || 0) + c + m);
+      });
+      var sums = Object.keys(per).sort().map(function (k) {
+        var x = per[k], credit = 0; Object.keys(x.bt).forEach(function (id) { credit += Math.max(0, r2_(x.bt[id] - (x.bp[id] || 0))); });
+        return [x.d, x.p, Object.keys(x.bills).length, x.sales, x.cash, x.momo, r2_(credit), x.debt, batch];
+      });
+      appendRows_(xsheetOf_('Daily summary', DSUM_HEAD, 2), sums);
+      // 3. carry forward: customer balances become old debts, cash held and bank totals carry over
+      Object.keys(plan.carryCust).forEach(function (k) {
+        var v = plan.carryCust[k]; if (Math.abs(v) < 0.005) return;
+        var nm = plan.carryNames[k], prev = openingFor_(nm);
+        arch.push([batch, 'OpenPrev', nm, prev]);
+        appendRows_(openSheet_(), [[nm, r2_(prev + v), stamp, user.name, 'carry:' + batch]]);
+      });
+      var i = 0;
+      Object.keys(plan.carryCash).forEach(function (k) {
+        var v = plan.carryCash[k]; if (Math.abs(v) < 0.005) return; i++;
+        carryRows.push(['K' + batch + '-' + i, a.date, 'Handover', plan.carryNames['p:' + k], r2_(-v), 'carry:' + batch + ' cash carried forward']);
+      });
+      if (Math.abs(plan.collected) > 0.004) carryRows.push(['K' + batch + '-B', a.date, 'Bank', '', r2_(-plan.collected), 'carry:' + batch + ' adjustment']);
     }
-    h += '<label>Type your owner key</label><input id="clo" type="password" autocomplete="off" style="' + inp + '"><label style="margin-top:8px;display:block">Type CLEAR to confirm</label><input id="clc" autocomplete="off" style="' + inp + '">' +
-      '<label style="display:flex;gap:10px;align-items:center;margin-top:12px"><input id="clu" type="checkbox" style="width:auto"> Every phone shows 0 not sent</label>' +
-      '<button class="btn danger block" id="clgo" data-act="xclearrun" data-m="' + d.m + '" data-d="' + esc(date) + '" disabled style="margin-top:12px">Wait 5…</button>';
-    sheet(h);
-    let n = 5; const t = setInterval(() => { const b = document.getElementById('clgo'); if (!b) { clearInterval(t); return; } n--; if (n > 0) b.textContent = 'Wait ' + n + '…'; else { b.disabled = false; b.textContent = 'Clear now'; clearInterval(t); } }, 1000);
-  };
-  ACT.xclearrun = async d => {
-    const ownerKey = val('clo').trim(), confirm = val('clc').trim();
-    if (!ownerKey) { toast('Type your owner key'); return; }
-    if (confirm.toUpperCase() !== 'CLEAR') { toast('Type CLEAR to confirm'); return; }
-    if (!$('#clu').checked) { toast('Tick the box first'); return; }
-    if (!navigator.onLine) { toast('Needs internet'); return; }
-    try { const r = await api('x', { op: 'clearrun', mode: d.m, date: d.d, ownerKey, confirm }); if (!r.ok) { toast(errText(r.error)); return; } } catch (e) { toast('Needs internet'); return; }
-    closeSheet(); toast('Done. You can restore it from "Cleared before".');
-    S.rep = null; S.hist = null; S.recs = null; DY.data = null;
-    await loadRecords(); await refreshCache(); await fetchReport(true);
-  };
-  ACT.xbatches = async () => {
-    if (!navigator.onLine) { toast('Needs internet'); return; }
-    let r; try { r = await api('x', { op: 'batches' }); } catch (e) { toast('Needs internet'); return; }
-    if (!r.ok) { toast(errText(r.error)); return; }
-    sheet('<h2>Cleared before</h2><p class="small muted">Newest first. You can restore only the newest one that is still cleared. Older safety copies stay in the sheet called Archive.</p>' +
-      (r.batches.length ? r.batches.map(b => '<div class="card"><b>' + esc(b.mode) + ' · ' + esc(b.date) + '</b><div class="small muted">' + esc(b.at) + ' by ' + esc(b.by) + ' · ' + b.sales + ' sale lines, ' + b.payments + ' payments, ' + b.handovers + ' handovers · ' + esc(b.status) + '</div>' + (b.canRestore ? '<div style="margin-top:8px"><input id="rsk" type="password" placeholder="Owner key" autocomplete="off" style="' + inp + '"><button class="btn primary block" style="margin-top:8px" data-act="xrestore" data-id="' + esc(b.id) + '">Restore this</button></div>' : '') + '</div>').join('') : '<div class="empty">Nothing has been cleared.</div>'));
-  };
-  ACT.xrestore = async d => {
-    const ownerKey = val('rsk').trim(); if (!ownerKey) { toast('Type your owner key'); return; }
-    try { const r = await api('x', { op: 'restore', batch: d.id, ownerKey }); if (!r.ok) { toast(errText(r.error)); return; } } catch (e) { toast('Needs internet'); return; }
-    closeSheet(); toast('Restored'); S.rep = null; S.hist = null; S.recs = null; DY.data = null;
-    await loadRecords(); await refreshCache(); await fetchReport(true);
-  };
+    appendRows_(archSheet_(), arch);
+    rewrite_('Sales', plan.keep.Sales); rewrite_('Payments', plan.keep.Payments); rewrite_('Cash', plan.keep.Cash.concat(carryRows));
+    OPEN_ = null;
+    appendRows_(xsheetOf_('Batches', BATCH_HEAD, 2), [[batch, stamp, user.name, a.mode === 'day' ? 'Delete one day' : 'Start from a day', a.date, plan.rm.Sales.length, plan.rm.Payments.length, plan.rm.Cash.length, 'Cleared']]);
+    return { ok: true, batch: batch, removed: { sales: plan.rm.Sales.length, payments: plan.rm.Payments.length, handovers: plan.rm.Cash.length } };
+  } finally {
+    lock.releaseLock();
+  }
+}
+function batchRows_() { return xrowsOf_('Batches', BATCH_HEAD, 2); }
+function batchList_() {
+  var rows = batchRows_(), latest = '';
+  rows.forEach(function (r) { if (String(r[8]) === 'Cleared' && String(r[0]) > latest) latest = String(r[0]); });
+  return { ok: true, batches: rows.map(function (r) {
+    return { id: String(r[0]), at: String(r[1]), by: String(r[2]), mode: String(r[3]), date: d_(r[4]), sales: num_(r[5]), payments: num_(r[6]), handovers: num_(r[7]), status: String(r[8]), canRestore: String(r[8]) === 'Cleared' && String(r[0]) === latest };
+  }).reverse().slice(0, 20) };
+}
+function restoreBatch_(user, req) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(28000);
+  try {
+    if (String(req.ownerKey || '').trim() === '' || String(req.ownerKey).trim() !== String(req.key || '').trim()) { Utilities.sleep(800); throw new Error('wrong_key'); }
+    var id = String(req.batch || ''), rows = batchRows_(), latest = '', found = -1;
+    rows.forEach(function (r, i) { if (String(r[8]) === 'Cleared') { if (String(r[0]) > latest) latest = String(r[0]); } if (String(r[0]) === id) found = i; });
+    if (found < 0) throw new Error('not_found');
+    if (String(rows[found][8]) !== 'Cleared') throw new Error('already_restored');
+    if (latest !== id) throw new Error('restore_latest_first');
+    var arch = xrowsOf_('Archive', ARCH_HEAD, 2).filter(function (r) { return String(r[0]) === id; }), back = { Sales: [], Payments: [], Cash: [] }, prevs = [];
+    arch.forEach(function (r) {
+      var t = String(r[1]);
+      if (t === 'OpenPrev') prevs.push([String(r[2]), num_(r[3])]);
+      else if (back[t]) back[t].push(r.slice(2, 2 + SHEETS[t].length));
+    });
+    // take away the carried-forward lines
+    var cs = sh_('Cash'), crows = rows_('Cash').filter(function (r) { return String(r[5] || '').indexOf('carry:' + id) !== 0; });
+    rewrite_('Cash', crows);
+    var stamp = Utilities.formatDate(new Date(), tz_(), 'yyyy-MM-dd HH:mm');
+    prevs.forEach(function (x) { appendRows_(openSheet_(), [[x[0], x[1], stamp, user.name, 'restored ' + id]]); });
+    OPEN_ = null;
+    ['Sales', 'Payments', 'Cash'].forEach(function (t) { if (back[t].length) append_(t, back[t]); });
+    // remove the daily summary lines of this clearing
+    var ds = xsheetOf_('Daily summary', DSUM_HEAD, 2), dl = ds.getLastRow();
+    if (dl >= 2) {
+      var dv = ds.getRange(2, 1, dl - 1, DSUM_HEAD.length).getValues().filter(function (r) { return String(r[8]) !== id; });
+      ds.getRange(2, 1, dl - 1, DSUM_HEAD.length).clearContent();
+      if (dv.length) ds.getRange(2, 1, dv.length, DSUM_HEAD.length).setValues(dv);
+    }
+    var bs = xsheetOf_('Batches', BATCH_HEAD, 2); bs.getRange(found + 2, 9, 1, 1).setValues([['Restored']]);
+    return { ok: true, restored: { sales: back.Sales.length, payments: back.Payments.length, handovers: back.Cash.length } };
+  } finally {
+    lock.releaseLock();
+  }
+}
 
-  /* ---------- owner: year history ---------- */
-  const MN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-  ACT.xyear = async d => {
-    if (!navigator.onLine) { toast('Needs internet'); return; }
-    const year = (d && d.y) || today().slice(0, 4);
-    let r; try { r = await api('x', { op: 'yearhist', year }); } catch (e) { toast('Needs internet'); return; }
-    if (!r.ok) { toast(errText(r.error)); return; }
-    const y = +year, c = 'padding:5px 4px;text-align:right';
-    sheet('<h2>Year ' + esc(year) + '</h2><div class="row between" style="margin-bottom:8px"><button class="btn sm" data-act="xyear" data-y="' + (y - 1) + '">‹ ' + (y - 1) + '</button><button class="btn sm" data-act="xyear" data-y="' + (y + 1) + '">' + (y + 1) + ' ›</button></div>' +
-      '<div class="stats"><div class="stat wine"><span>Total sold</span><b>' + money(r.total.sales) + '</b></div><div class="stat"><span>Cash</span><b>' + money(r.total.cash) + '</b></div><div class="stat"><span>MoMo</span><b>' + money(r.total.momo) + '</b></div><div class="stat"><span>Credit given</span><b>' + money(r.total.credit) + '</b></div><div class="stat"><span>Bills</span><b>' + r.total.bills + '</b></div><div class="stat"><span>Debts paid</span><b>' + money(r.total.debt) + '</b></div></div>' +
-      '<div style="overflow-x:auto;margin-top:8px"><table style="border-collapse:collapse;width:100%;font-size:13px"><tr><td style="padding:5px 4px;font-weight:600">Month</td><td style="' + c + ';font-weight:600">Sold</td><td style="' + c + ';font-weight:600">Cash</td><td style="' + c + ';font-weight:600">MoMo</td><td style="' + c + ';font-weight:600">Bills</td></tr>' +
-      r.months.map(m => '<tr style="border-top:1px solid var(--line);' + (m.sales || m.bills ? '' : 'opacity:.4') + '"><td style="padding:5px 4px">' + MN[m.m - 1].slice(0, 3) + '</td><td style="' + c + '">' + money(m.sales) + '</td><td style="' + c + '">' + money(m.cash) + '</td><td style="' + c + '">' + money(m.momo) + '</td><td style="' + c + '">' + m.bills + '</td></tr>').join('') + '</table></div>' +
-      (r.people.length ? '<h3>By sales person</h3>' + r.people.map(p => '<div class="row between small" style="padding:3px 0"><span>' + esc(p.name) + '</span><b>' + money(p.sales) + '</b></div>').join('') : '') +
-      '<p class="small muted">Includes the daily summaries kept after clearing, so cleared days still count.</p>');
-  };
+// progress over a year: live records plus the daily summaries kept after clearing
+function yearHist_(req) {
+  var year = String(req.year || xToday_(req).slice(0, 4)), months = [];
+  for (var i = 0; i < 12; i++) months.push({ m: i + 1, sales: 0, cash: 0, momo: 0, bills: 0, credit: 0, debt: 0 });
+  var people = {};
+  function add_(d, p, bills, sales, cash, momo, credit, debt) {
+    if (d.slice(0, 4) !== year) return;
+    var m = months[Number(d.slice(5, 7)) - 1]; m.sales = r2_(m.sales + sales); m.cash = r2_(m.cash + cash); m.momo = r2_(m.momo + momo); m.bills += bills; m.credit = r2_(m.credit + credit); m.debt = r2_(m.debt + debt);
+    var k = key_(p); people[k] = people[k] || { name: String(p).trim(), sales: 0, cash: 0, momo: 0 }; people[k].sales = r2_(people[k].sales + sales); people[k].cash = r2_(people[k].cash + cash); people[k].momo = r2_(people[k].momo + momo);
+  }
+  var bt = {}, bp = {};
+  rows_('Sales').forEach(function (r) { var id = String(r[0]); bt[id] = { d: d_(r[1]), p: String(r[3]), t: r2_(((bt[id] || {}).t || 0) + num_(r[8])) }; add_(d_(r[1]), r[3], 0, num_(r[8]), 0, 0, 0, 0); });
+  Object.keys(bt).forEach(function (id) { add_(bt[id].d, bt[id].p, 1, 0, 0, 0, 0, 0); });
+  rows_('Payments').forEach(function (r) {
+    var c = num_(r[6]), m = num_(r[7]), debt = key_(r[8]) === 'debt payment';
+    if (!debt) bp[String(r[5])] = r2_((bp[String(r[5])] || 0) + c + m);
+    add_(d_(r[1]), r[3], 0, 0, c, m, 0, debt ? c + m : 0);
+  });
+  Object.keys(bt).forEach(function (id) { var cr = Math.max(0, r2_(bt[id].t - (bp[id] || 0))); if (cr > 0) add_(bt[id].d, bt[id].p, 0, 0, 0, 0, cr, 0); });
+  xrowsOf_('Daily summary', DSUM_HEAD, 2).forEach(function (r) { add_(d_(r[0]), r[1], num_(r[2]), num_(r[3]), num_(r[4]), num_(r[5]), num_(r[6]), num_(r[7])); });
+  var tot = { sales: 0, cash: 0, momo: 0, bills: 0, credit: 0, debt: 0 };
+  months.forEach(function (m) { Object.keys(tot).forEach(function (k) { tot[k] = r2_(tot[k] + m[k]); }); });
+  return { ok: true, year: year, months: months, total: tot, people: Object.keys(people).map(function (k) { return people[k]; }).sort(function (a, b) { return b.sales - a.sales; }) };
+}
 
-  /* ---------- owner: check my books ---------- */
-  ACT.xcheck = async () => {
-    if (!navigator.onLine) { toast('Needs internet'); return; }
-    let r; try { r = await api('x', { op: 'checkbooks' }); } catch (e) { toast('Needs internet'); return; }
-    if (!r.ok) { toast(errText(r.error)); return; }
-    KL.CHK = r.issues;
-    if (!r.issues.length) { sheet('<h2>Check my books</h2><div class="card" style="border-left:4px solid #2e7d32"><b class="green">All good.</b><div class="small muted">Cash, customer balances, bills and names all add up.</div></div>'); return; }
-    sheet('<h2>Check my books</h2><p class="small muted">' + r.issues.length + ' thing(s) to look at.</p>' + r.issues.map((x, i) => {
-      let b = '';
-      if (x.kind === 'cash') b = '<button class="btn sm" data-act="xledger" data-p="' + esc(x.person) + '">See the cash lines</button>';
-      else if (x.kind === 'customer') b = '<button class="btn sm primary" data-act="xfixcust" data-i="' + i + '">Fix: make balance 0</button>';
-      else if (x.kind === 'names') b = '<button class="btn sm primary" data-act="xren" data-n="' + esc(x.other) + '">Fix: join names</button>';
-      else if (x.kind === 'bill') b = '<button class="btn sm" data-act="xcheckgo">Open Records</button>';
-      return '<div class="card" style="border-left:4px solid var(--wine)"><div class="small">' + esc(x.text) + '</div>' + (b ? '<div style="margin-top:8px">' + b + '</div>' : '') + '</div>';
-    }).join(''));
-  };
-  ACT.xcheckgo = () => { closeSheet(); ACT.tab({ t: 'cash' }); };
-  ACT.xfixcust = async d => {
-    const x = (KL.CHK || [])[+d.i]; if (!x) return;
-    if (!confirmNow('Make ' + x.customer + ' balance 0? This adds ' + money(-x.amount) + ' to the old balance.')) return;
-    try { const r = await api('x', { op: 'openset', customer: x.customer, amount: r2((x.opening || 0) - x.amount), note: 'fix overpaid' }); if (!r.ok) { toast(errText(r.error)); return; } } catch (e) { toast('Needs internet'); return; }
-    toast('Fixed'); await refreshCache(); await fetchReport(true); ACT.xcheck();
-  };
-  const confirmNow = m => window.confirm(m);
+// "Check my books": anything that does not add up
+function lev_(a, b) {
+  if (Math.abs(a.length - b.length) > 1) return 9;
+  var d = [], i, j; for (i = 0; i <= a.length; i++) { d[i] = [i]; } for (j = 0; j <= b.length; j++) d[0][j] = j;
+  for (i = 1; i <= a.length; i++) for (j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1));
+  return d[a.length][b.length];
+}
+function checkBooks_(req) {
+  var issues = [], sales = rows_('Sales'), pays = rows_('Payments'), cash = rows_('Cash'), custs = rows_('Customers');
+  var people = rows_('People').filter(function (r) { return key_(r[2]) !== 'admin' && yes_(r[3]); }).map(function (r) { return String(r[0]).trim(); });
+  people.forEach(function (n) {
+    var held = cashHeld_(pays, cash, n);
+    if (held < -0.004) issues.push({ kind: 'cash', person: n, amount: held, text: n + ' holds negative cash: ' + held.toFixed(2) + '. More was handed over than he collected.' });
+  });
+  var bal = balances_(sales, pays), seen = {};
+  custs.forEach(function (r) {
+    var name = String(r[0]).trim(), b = bal_(bal, name);
+    if (b < -0.004) issues.push({ kind: 'customer', customer: name, amount: b, opening: openingFor_(name), text: name + ' has paid ' + (-b).toFixed(2) + ' more than he or she owed.' });
+  });
+  var bills = {}, paid = {};
+  sales.forEach(function (r) { var id = String(r[0]); bills[id] = bills[id] || { id: id, p: String(r[3]), c: String(r[4]), t: 0 }; bills[id].t = r2_(bills[id].t + num_(r[8])); });
+  pays.forEach(function (r) { if (key_(r[8]) !== 'debt payment') paid[String(r[5])] = r2_((paid[String(r[5])] || 0) + num_(r[6]) + num_(r[7])); });
+  Object.keys(bills).forEach(function (id) { if ((paid[id] || 0) > bills[id].t + 0.004) issues.push({ kind: 'bill', bill: id, person: bills[id].p, customer: bills[id].c, text: 'A bill for ' + bills[id].c + ' (' + bills[id].p + ') was paid ' + r2_(paid[id] - bills[id].t).toFixed(2) + ' more than its total.' }); });
+  // names that look like the same person
+  var names = custs.map(function (r) { return String(r[0]).trim(); }), norm = names.map(function (n) { return n.toLowerCase().replace(/[^a-z0-9]/g, ''); });
+  for (var i = 0; i < names.length; i++) for (var j = i + 1; j < names.length; j++) {
+    if (norm[i] && norm[j] && (norm[i] === norm[j] || (norm[i].length >= 6 && norm[j].length >= 6 && lev_(norm[i], norm[j]) <= 1)))
+      issues.push({ kind: 'names', customer: names[i], other: names[j], text: '"' + names[i] + '" and "' + names[j] + '" may be the same customer.' });
+  }
+  var walk = bal_(bal, WALKIN);
+  if (Math.abs(walk) > 0.004) issues.push({ kind: 'walkin', amount: walk, text: 'Walk-in customers show a balance of ' + walk.toFixed(2) + '. They should always pay in full.' });
+  return { ok: true, issues: issues.slice(0, 60) };
+}
 
-  if (S.session) render(true);
-})();
+// owner edits a debt payment or a handover (always with a reason, always logged)
+function editPay_(user, req) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(28000);
+  try {
+    var id = String(req.id || ''), reason = String(req.reason || '').trim();
+    if (reason.length < 3) throw new Error('reason_needed');
+    var sh = sh_('Payments'), last = sh.getLastRow(); if (last < 2) throw new Error('not_found');
+    var data = sh.getRange(2, 1, last - 1, 9).getValues(), at = -1;
+    data.forEach(function (r, i) { if (String(r[0]) === id && key_(r[8]) === 'debt payment') at = i; });
+    if (at < 0) throw new Error('not_found');
+    var row = data[at], cash = r2_(num_(req.cash)), momo = r2_(num_(req.momo));
+    if (cash < 0 || momo < 0 || cash + momo <= 0) throw new Error('bad_amount');
+    var bal = bal_(balances_(rows_('Sales'), rows_('Payments')), row[4]), after = r2_(bal + num_(row[6]) + num_(row[7]) - cash - momo);
+    if (after < -0.004) throw new Error('more_than_owed');
+    var before = 'cash ' + num_(row[6]).toFixed(2) + ', momo ' + num_(row[7]).toFixed(2);
+    sh.getRange(at + 2, 7, 1, 2).setValues([[cash, momo]]);
+    xappend_('Edit log', [Utilities.formatDate(new Date(), tz_(), 'yyyy-MM-dd HH:mm'), user.name, id, String(row[3]), String(row[4]), reason, before, 'cash ' + cash.toFixed(2) + ', momo ' + momo.toFixed(2) + ' (debt payment)']);
+    return { ok: true };
+  } finally { lock.releaseLock(); }
+}
+function editHand_(user, req) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(28000);
+  try {
+    var id = String(req.id || ''), reason = String(req.reason || '').trim();
+    if (reason.length < 3) throw new Error('reason_needed');
+    var sh = sh_('Cash'), last = sh.getLastRow(); if (last < 2) throw new Error('not_found');
+    var data = sh.getRange(2, 1, last - 1, 6).getValues(), at = -1;
+    data.forEach(function (r, i) { if (String(r[0]) === id && r[2] === 'Handover') at = i; });
+    if (at < 0) throw new Error('not_found');
+    var row = data[at], amt = r2_(num_(req.amount)), date = String(req.date || d_(row[1])), note = String(req.note == null ? row[5] : req.note).slice(0, 200);
+    if (!(amt > 0)) throw new Error('bad_amount');
+    if (!isDate_(date)) throw new Error('bad_date');
+    var held = cashHeld_(rows_('Payments'), rows_('Cash'), row[3]) + num_(row[4]) - amt;
+    if (held < -0.004) throw new Error('more_than_held');
+    sh.getRange(at + 2, 2, 1, 1).setValues([[date]]); sh.getRange(at + 2, 5, 1, 2).setValues([[amt, note]]);
+    xappend_('Edit log', [Utilities.formatDate(new Date(), tz_(), 'yyyy-MM-dd HH:mm'), user.name, id, String(row[3]), '', reason, 'handover ' + num_(row[4]).toFixed(2) + ' on ' + d_(row[1]), 'handover ' + amt.toFixed(2) + ' on ' + date]);
+    return { ok: true };
+  } finally { lock.releaseLock(); }
+}
+
+
+/* ---------- weekly printable sheets (Monday to Sunday, numbered from the first Monday on or before 1 Jan) ---------- */
+function wUtc_(s) { var p = String(s).split('-'); return Date.UTC(+p[0], +p[1] - 1, +p[2]); }
+function wStr_(ms) { var d = new Date(ms); return d.getUTCFullYear() + '-' + ('0' + (d.getUTCMonth() + 1)).slice(-2) + '-' + ('0' + d.getUTCDate()).slice(-2); }
+function wMonday_(s) { var ms = wUtc_(s), dow = new Date(ms).getUTCDay(); return ms - ((dow + 6) % 7) * 86400000; }
+function weekSheet_(req) {
+  var date = String(req.date || xToday_(req));
+  if (!isDate_(date)) throw new Error('bad_date');
+  var mon = wMonday_(date), year = new Date(mon).getUTCFullYear(), m1 = wMonday_(year + '-01-01'), no = Math.round((mon - m1) / (7 * 86400000)) + 1;
+  var days = [], i;
+  for (i = 0; i < 7; i++) days.push(wStr_(mon + i * 86400000));
+  var reps = days.map(function (d) { return dayReport_({ date: d }); }), people = [];
+  reps[0].people.forEach(function (p0, pi) {
+    var t = { name: p0.name, days: [], sales: 0, cash: 0, momo: 0, credit: 0, debtIn: 0, handed: 0, bills: 0 };
+    reps.forEach(function (rp, di) {
+      var p = rp.people[pi];
+      t.days.push({ date: days[di], bills: p.bills, sales: p.sales, cash: p.cash, momo: p.momo, credit: p.credit, debtIn: p.debtIn, handed: p.handed, heldEnd: p.heldEnd, bills_: p.bills_, pays: p.pays, closed: p.closed ? { counted: p.closed.counted, expected: p.closed.expected, diff: p.closed.diff } : null });
+      ['sales', 'cash', 'momo', 'credit', 'debtIn', 'handed', 'bills'].forEach(function (f) { t[f] = r2_(t[f] + p[f]); });
+    });
+    t.heldEnd = t.days[6].heldEnd;
+    t.heldStart = r2_(t.days[0].heldEnd - t.days[0].cash + t.days[0].handed);
+    people.push(t);
+  });
+  return { ok: true, week: no, year: year, from: days[0], to: days[6], printedAt: nowDate_() + ' ' + nowTime_(), people: people };
+}
