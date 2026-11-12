@@ -271,10 +271,11 @@ async function syncNow(manual) {
   if (S.syncing || !S.session) return;
   S.syncing = true; paintStatus();
   try {
-    let guard = 0;
+    let guard = 0, boot = null;
     while (S.queue.length && guard++ < 20) {
       const batch = S.queue.slice().sort(byTs).slice(0, 40);
-      const r = await api('sync', { ops: batch });
+      const r = await api('sync', { ops: batch, boot: S.queue.length <= 40 }); // last batch brings back fresh data in the same trip
+      if (r.ok && r.boot && r.boot.ok) boot = r.boot;
       if (!r.ok) { if (r.error === 'bad_key') { S.keyBad = true; break; } throw new Error(r.error || 'sync'); }
       for (const res of r.results) {
         const op = S.queue.find(o => o.id === res.id);
@@ -287,7 +288,7 @@ async function syncNow(manual) {
     }
     if (!S.keyBad) {
       const snap = S.applied.map(o => o.id);
-      const b = await api('bootstrap');
+      const b = boot || await api('bootstrap');
       if (b.ok) {
         S.cache = b; await kvSet('cache', b);
         S.applied = S.applied.filter(o => !snap.includes(o.id));
@@ -321,8 +322,8 @@ async function boot() {
   if (S.session) { syncNow(); }
   window.addEventListener('online', () => { S.online = true; paintStatus(); syncNow(); });
   window.addEventListener('offline', () => { S.online = false; paintStatus(); });
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNow(); });
-  setInterval(() => { if (!navigator.onLine || !S.session) return; const live = S.session.role === 'admin' && (S.tab === 'dash' || S.tab === 'cash'); if (live || S.queue.length || Date.now() - (S.lastSync || 0) > 60000) syncNow(); }, 20000);  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); S.installEvt = e; render(true); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && (S.queue.length || Date.now() - (S.lastSync || 0) > 30000)) syncNow(); });
+  setInterval(() => { if (!navigator.onLine || !S.session) return; const age = Date.now() - (S.lastSync || 0), live = S.session.role === 'admin' && (S.tab === 'dash' || S.tab === 'cash'); if (S.queue.length || (live && age > 60000) || age > 300000) syncNow(); }, 20000);  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); S.installEvt = e; render(true); });
 }
 function fatal(msg) { $('#app').innerHTML = '<div class="login"><h2>KL Bread</h2><p>' + esc(msg) + '</p></div>'; }
 
@@ -849,4 +850,3 @@ boot();
 <script src="extras3.js"></script>
 </body>
 </html>
-  
